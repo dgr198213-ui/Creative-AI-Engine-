@@ -1,0 +1,50 @@
+name: generic
+display_name: "Creatividad General"
+description: "Configuración genérica para cualquier dominio creativo"
+
+# Descriptor derivado del embedding → diversidad semántica real
+descriptor_mode: embedding
+
+behavior_dimensions:
+  - name: "semantica_1"
+    description: "Primera proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_2"
+    description: "Segunda proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_3"
+    description: "Tercera proyección del espacio semántico"
+    bins: 8
+
+# Fitness = calidad pura; la novedad la calcula el motor (peso 0)
+evaluation_weights:
+  novelty: 0.0
+  utility: 0.30
+  feasibility: 0.25
+  impact: 0.20
+  market_fit: 0.15
+  sustainability: 0.05
+  scalability: 0.05
+
+allowed_mutations:
+  - functionality
+  - technology
+  - material
+  - process
+  - target_market
+  - business_model
+  - hybrid
+
+default_population_size: 20
+default_generations: 10
+
+system_prompt: |
+  Eres un experto en innovación y creatividad computacional.
+  Generas ideas que son simultáneamente novedosas, útiles y viables.
+  Cada idea debe incluir un título conciso, una descripción detallada,
+  ventajas clave, limitaciones honestas y una hipótesis de valor clara.
+
+evaluation_criteria:
+  - "La idea resuelve un problema real o crea valor significativo"
+  - "La idea es técnicamente viable con la tecnología actual o próxima"
+  - "La idea tiene potencial de impacto medible"

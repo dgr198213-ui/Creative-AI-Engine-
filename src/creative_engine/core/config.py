@@ -1,0 +1,140 @@
+"""Configuración centralizada con soporte para dominios y YAML."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel, Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .models import BehaviorDimension, DomainConfig, DomainName
+
+# raíz del repo: src/creative_engine/core/config.py → ../../../configs
+_CONFIGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "configs"
+
+
+class LLMProviderConfig(BaseModel):
+    """Configuración de un proveedor LLM (API OpenAI-compatible)."""
+
+    name: str = "openai"
+    api_key: SecretStr = SecretStr("")
+    base_url: str | None = None
+    model: str = "gpt-4o-mini"
+    max_tokens: int = 4096
+    temperature: float = 0.8
+    max_concurrent: int = 5
+    timeout_seconds: float = 60.0
+
+
+class DatabaseConfig(BaseModel):
+    """Configuración de bases de datos."""
+
+    postgres_url: str = "postgresql+asyncpg://engine:engine_dev@localhost:5432/creative_engine"
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "neo4j_dev"
+    redis_url: str = "redis://localhost:6379/0"
+
+
+class EvolutionConfig(BaseModel):
+    """Configuración global del motor evolutivo."""
+
+    max_concurrent_evaluations: int = Field(default=10, ge=1, le=100)
+    mutation_rate: float = Field(default=0.4, ge=0.0, le=1.0)
+    crossover_rate: float = Field(default=0.25, ge=0.0, le=1.0)
+    random_injection_rate: float = Field(default=0.1, ge=0.0, le=0.5)
+    max_generation_time_seconds: float = 300.0
+    # k vecinos para el cálculo objetivo de novedad
+    novelty_k_nearest: int = Field(default=5, ge=1, le=50)
+
+
+class Settings(BaseSettings):
+    """Configuración global cargada desde env vars y archivos YAML."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="CREATIVE_",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    app_name: str = "Creative AI Engine"
+    debug: bool = False
+    log_level: str = "INFO"
+
+    llm: dict[str, LLMProviderConfig] = Field(default_factory=dict)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
+
+    domains: dict[DomainName, DomainConfig] = Field(default_factory=dict)
+
+    @classmethod
+    def load(cls) -> Settings:
+        """Carga configuración desde env + archivos YAML de dominios."""
+        settings = cls()
+
+        if _CONFIGS_DIR.exists():
+            for yaml_file in sorted(_CONFIGS_DIR.glob("*.yaml")):
+                try:
+                    domain_cfg = DomainConfig.model_validate(
+                        yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+                    )
+                    settings.domains[domain_cfg.name] = domain_cfg
+                except Exception as e:
+                    import structlog
+
+                    structlog.get_logger(__name__).warning(
+                        "domain_config_invalid", file=str(yaml_file), error=str(e)
+                    )
+
+        if DomainName.GENERIC not in settings.domains:
+            settings.domains[DomainName.GENERIC] = default_generic_domain()
+
+        return settings
+
+    def get_domain(self, name: DomainName) -> DomainConfig:
+        return self.domains.get(name, self.domains[DomainName.GENERIC])
+
+
+def default_generic_domain() -> DomainConfig:
+    """Dominio genérico embebido: garantiza arranque sin configs/."""
+    return DomainConfig(
+        name=DomainName.GENERIC,
+        display_name="Creatividad General",
+        description="Configuración genérica para cualquier dominio creativo",
+        descriptor_mode="embedding",
+        behavior_dimensions=[
+            BehaviorDimension(name="semantica_1", bins=10),
+            BehaviorDimension(name="semantica_2", bins=10),
+            BehaviorDimension(name="semantica_3", bins=8),
+        ],
+        system_prompt=(
+            "Eres un experto en innovación y creatividad computacional. "
+            "Generas ideas que son simultáneamente novedosas, útiles y viables. "
+            "Cada idea debe incluir un título conciso, una descripción detallada, "
+            "ventajas clave, limitaciones honestas y una hipótesis de valor clara."
+        ),
+        evaluation_criteria=[
+            "La idea resuelve un problema real o crea valor significativo",
+            "La idea es técnicamente viable con la tecnología actual o próxima",
+            "La idea tiene potencial de impacto medible",
+        ],
+    )
+
+
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings.load()
+    return _settings
+
+
+def reset_settings() -> None:
+    """Resetea el singleton (útil en tests)."""
+    global _settings
+    _settings = None

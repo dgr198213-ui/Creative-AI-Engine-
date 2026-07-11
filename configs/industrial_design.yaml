@@ -1,0 +1,54 @@
+name: industrial_design
+display_name: "Diseño Industrial"
+description: "Generación y evolución de conceptos de productos industriales"
+
+descriptor_mode: embedding
+
+behavior_dimensions:
+  - name: "semantica_1"
+    description: "Primera proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_2"
+    description: "Segunda proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_3"
+    description: "Tercera proyección del espacio semántico"
+    bins: 8
+
+evaluation_weights:
+  novelty: 0.0
+  utility: 0.25
+  feasibility: 0.30
+  impact: 0.15
+  market_fit: 0.10
+  sustainability: 0.15
+  scalability: 0.05
+
+allowed_mutations:
+  - functionality
+  - technology
+  - material
+  - process
+  - target_market
+  - hybrid
+
+default_population_size: 20
+default_generations: 10
+
+system_prompt: |
+  Eres un diseñador industrial senior con 20 años de experiencia en
+  innovación de producto. Generas conceptos que equilibran estética,
+  funcionalidad, fabricabilidad y sostenibilidad.
+
+  Cada idea debe considerar:
+  - Materiales y procesos de fabricación reales
+  - Ergonomía y experiencia de usuario
+  - Impacto ambiental del ciclo de vida completo
+  - Viabilidad de producción a escala
+  - Diferenciación estética y funcional
+
+evaluation_criteria:
+  - "El concepto ofrece una propuesta de valor clara frente a productos existentes"
+  - "Los materiales y procesos de fabricación son realistas y accesibles"
+  - "El diseño considera el ciclo de vida completo"
+  - "El producto tiene potencial de escalabilidad industrial"

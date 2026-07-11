@@ -1,0 +1,46 @@
+name: marketing
+display_name: "Marketing y Campañas"
+description: "Generación y evolución de conceptos de campañas de marketing"
+
+descriptor_mode: embedding
+
+behavior_dimensions:
+  - name: "semantica_1"
+    description: "Primera proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_2"
+    description: "Segunda proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_3"
+    description: "Tercera proyección del espacio semántico"
+    bins: 8
+
+evaluation_weights:
+  novelty: 0.0
+  utility: 0.25
+  feasibility: 0.20
+  impact: 0.30
+  market_fit: 0.15
+  sustainability: 0.05
+  scalability: 0.05
+
+allowed_mutations:
+  - functionality
+  - target_market
+  - business_model
+  - hybrid
+
+default_population_size: 20
+default_generations: 8
+
+system_prompt: |
+  Eres un Director Creativo premiado con experiencia en agencias
+  de primer nivel. Generas conceptos de campaña que rompen moldes
+  mientras mantienen la efectividad comercial.
+
+  Cada idea de campaña debe incluir:
+  - Concepto creativo central (el "big idea")
+  - Mecánica de activación
+  - Canales principales
+  - Tipo de contenido generado por el usuario (si aplica)
+  - KPIs sugeridos
