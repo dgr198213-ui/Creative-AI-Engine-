@@ -78,6 +78,7 @@ creative-engine serve       # → http://localhost:8000/docs
 | `POST /api/v1/evolution/start` | Ejecuta una evolución y devuelve las top ideas |
 | `GET /api/v1/evolution/{run_id}` | Resumen de una ejecución persistida |
 | `GET /api/v1/runs/{run_id}/elites` | El abanico completo de ideas élite |
+| `GET /api/v1/runs/{run_id}/families` | Élites agrupadas en familias automáticas de enfoques (`?with_reports=true` para informe por familia) |
 | `GET /api/v1/ideas/{idea_id}` | Detalle, relacionadas y linaje evolutivo |
 | `GET /api/v1/memory/recommendations/{idea_id}` | Ideas relacionadas (similitud + diversidad) |
 | `GET /api/v1/stats` | Estadísticas globales o por run |

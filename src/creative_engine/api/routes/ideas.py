@@ -55,6 +55,92 @@ async def get_run_elites(
     }
 
 
+@router.get("/runs/{run_id}/families")
+async def get_run_families(
+    run_id: str,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=300),
+    distance_threshold: float = Query(default=0.25, ge=0.05, le=1.0),
+    with_reports: bool = Query(default=False),
+) -> dict:
+    """Agrupa las élites de un run en familias automáticas de enfoques.
+
+    Convierte la lista plana de ideas en grupos por proximidad semántica:
+    "N enfoques distintos, la mejor idea de cada uno". El número de
+    familias es automático (emerge del umbral de distancia).
+
+    `with_reports=true` genera un informe ejecutivo por familia con el
+    WriterAgent — cuesta una llamada LLM por familia, por eso es opcional.
+    """
+    from ...evolution.clustering import group_into_families
+
+    repo: IdeaRepository = request.app.state.repository
+    elites = await repo.get_elites_by_run(run_id, limit=limit)
+
+    if not elites:
+        raise HTTPException(status_code=404, detail=f"Sin élites para el run {run_id}")
+
+    families = group_into_families(elites, distance_threshold=distance_threshold)
+
+    if with_reports:
+        await _attach_reports(families)
+
+    return {
+        "run_id": run_id,
+        "family_count": len(families),
+        "total_elites": len(elites),
+        "families": [
+            {
+                "family_id": fam.family_id,
+                "size": fam.size,
+                "avg_fitness": round(fam.avg_fitness, 4),
+                "representative": {
+                    "id": fam.representative.id,
+                    "title": fam.representative.title,
+                    "fitness": fam.representative.fitness,
+                    "novelty": (
+                        fam.representative.evaluation.novelty
+                        if fam.representative.evaluation
+                        else None
+                    ),
+                    "description": fam.representative.description[:300],
+                },
+                "report": fam.report,
+                "members": [
+                    {
+                        "id": m.id,
+                        "title": m.title,
+                        "fitness": m.fitness,
+                        "generation": m.generation,
+                    }
+                    for m in fam.members
+                ],
+            }
+            for fam in families
+        ],
+    }
+
+
+async def _attach_reports(families: list) -> None:
+    """Genera un informe por familia con el WriterAgent (una llamada LLM cada uno)."""
+    from ...agents.writer import WriterAgent
+    from ...core.config import get_settings
+    from ...llm.provider import LLMProvider
+
+    settings = get_settings()
+    if not settings.llm:
+        return  # sin LLM configurado: se devuelven las familias sin informe
+
+    config = next(iter(settings.llm.values()))
+    llm = LLMProvider(config)
+    try:
+        writer = WriterAgent(llm)
+        for fam in families:
+            fam.report = await writer.write_report(fam.representative)
+    finally:
+        await llm.close()
+
+
 @router.get("/stats")
 async def get_stats(request: Request, run_id: str | None = None) -> dict:
     """Estadísticas globales o por ejecución."""
