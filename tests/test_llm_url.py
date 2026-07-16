@@ -34,3 +34,44 @@ async def test_chat_completions_url(base_url: str | None, expected: str) -> None
         assert str(req.url) == expected
     finally:
         await provider.close()
+
+
+async def test_structured_parses_markdown_wrapped_json() -> None:
+    """Gemini envuelve el JSON en ```json ... ```; debe parsearse igual."""
+    from unittest.mock import AsyncMock, patch
+
+    from creative_engine.llm.provider import LLMProvider, LLMResponse
+
+    provider = LLMProvider(LLMProviderConfig(name="gemini", api_key=SecretStr("k")))
+    fake = LLMResponse(
+        content='```json\n{"score": 0.82, "feedback": "buena idea"}\n```',
+        model="g",
+        provider="gemini",
+    )
+    try:
+        with patch.object(provider, "_call_api", AsyncMock(return_value=fake)):
+            data = await provider.generate_structured("evalúa esto")
+        assert data["score"] == 0.82
+        assert data["feedback"] == "buena idea"
+    finally:
+        await provider.close()
+
+
+async def test_structured_parses_json_with_preamble() -> None:
+    """Texto antes del JSON tampoco debe romper el parseo."""
+    from unittest.mock import AsyncMock, patch
+
+    from creative_engine.llm.provider import LLMProvider, LLMResponse
+
+    provider = LLMProvider(LLMProviderConfig(name="test", api_key=SecretStr("k")))
+    fake = LLMResponse(
+        content='Claro, aquí está:\n{"score": 0.5, "feedback": "ok"}',
+        model="g",
+        provider="test",
+    )
+    try:
+        with patch.object(provider, "_call_api", AsyncMock(return_value=fake)):
+            data = await provider.generate_structured("evalúa")
+        assert data["score"] == 0.5
+    finally:
+        await provider.close()

@@ -6,7 +6,6 @@ Soporta cualquier API OpenAI-compatible (OpenAI, DeepSeek, Qwen, Ollama...).
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -88,7 +87,14 @@ class LLMProvider:
         response_format: dict[str, Any] | None = None,
         system_prompt: str | None = None,
     ) -> dict[str, Any]:
-        """Genera una respuesta estructurada (JSON)."""
+        """Genera una respuesta estructurada (JSON).
+
+        Usa un parser tolerante que extrae el JSON aunque el modelo lo
+        envuelva en ```json ... ``` o añada texto alrededor (habitual en
+        Gemini y otros modelos que ignoran response_format).
+        """
+        from ..evolution.mutation import parse_llm_json
+
         async with self._semaphore:
             await self._rate_limit()
             response = await self._call_api(
@@ -99,13 +105,10 @@ class LLMProvider:
                 response_format=response_format,
             )
             try:
-                data = json.loads(response.content)
-            except json.JSONDecodeError as e:
+                return parse_llm_json(response.content)
+            except Exception as e:
                 self._log.error("structured_parse_failed", raw=response.content[:300])
                 raise LLMError(f"Respuesta no es JSON válido: {e}") from e
-            if not isinstance(data, dict):
-                raise LLMError("La respuesta estructurada no es un objeto JSON")
-            return data
 
     @retry(
         retry=retry_if_exception_type((LLMRateLimitError, httpx.ConnectError)),
@@ -149,6 +152,15 @@ class LLMProvider:
             raise LLMRateLimitError(
                 f"Rate limit excedido en {self._config.name}",
                 details={"status": 429, "provider": self._config.name},
+            )
+
+        # 503/500: sobrecarga o error temporal del proveedor (p.ej. Gemini
+        # 'high demand'). Reintentable con backoff igual que el rate limit.
+        if resp.status_code in (500, 502, 503, 504):
+            raise LLMRateLimitError(
+                f"Proveedor {self._config.name} no disponible temporalmente "
+                f"(HTTP {resp.status_code})",
+                details={"status": resp.status_code, "provider": self._config.name},
             )
 
         if resp.status_code != 200:
