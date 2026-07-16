@@ -45,7 +45,7 @@ class LLMProvider:
         self._config = config
         self._semaphore = asyncio.Semaphore(config.max_concurrent)
         self._last_request_time: float = 0.0
-        self._min_interval = 0.1  # mínimo 100 ms entre requests
+        self._min_interval = config.min_interval_seconds
 
         # httpx descarta el path de base_url si la petición empieza por "/".
         # Normalizamos: base con barra final + ruta relativa sin barra inicial,
@@ -109,8 +109,8 @@ class LLMProvider:
 
     @retry(
         retry=retry_if_exception_type((LLMRateLimitError, httpx.ConnectError)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
         reraise=True,
     )
     async def _call_api(

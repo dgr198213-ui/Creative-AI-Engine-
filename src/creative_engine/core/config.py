@@ -25,6 +25,9 @@ class LLMProviderConfig(BaseModel):
     temperature: float = 0.8
     max_concurrent: int = 5
     timeout_seconds: float = 60.0
+    # Intervalo mínimo entre peticiones (segundos). Súbelo para APIs con
+    # rate limits estrictos como el free tier de Gemini (p.ej. 4.0 = ~15/min).
+    min_interval_seconds: float = 0.1
 
 
 class DatabaseConfig(BaseModel):
