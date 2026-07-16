@@ -47,8 +47,14 @@ class LLMProvider:
         self._last_request_time: float = 0.0
         self._min_interval = 0.1  # mínimo 100 ms entre requests
 
+        # httpx descarta el path de base_url si la petición empieza por "/".
+        # Normalizamos: base con barra final + ruta relativa sin barra inicial,
+        # para que rutas como .../v1beta/openai/ + chat/completions se preserven
+        # (necesario p.ej. con la capa compatible-OpenAI de Gemini).
+        base = (config.base_url or "https://api.openai.com/v1").rstrip("/") + "/"
+
         self._client = httpx.AsyncClient(
-            base_url=config.base_url or "https://api.openai.com/v1",
+            base_url=base,
             timeout=httpx.Timeout(config.timeout_seconds),
             headers={
                 "Authorization": f"Bearer {config.api_key.get_secret_value()}",
@@ -133,7 +139,7 @@ class LLMProvider:
             payload["response_format"] = response_format
 
         try:
-            resp = await self._client.post("/chat/completions", json=payload)
+            resp = await self._client.post("chat/completions", json=payload)
         except httpx.ConnectError:
             raise
         except httpx.HTTPError as e:

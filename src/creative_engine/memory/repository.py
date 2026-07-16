@@ -82,10 +82,17 @@ class IdeaRepository:
         self._log = logger.bind(component="IdeaRepository")
 
     async def initialize(self) -> None:
-        """Crea las tablas si no existen."""
+        """Crea las tablas e índices si no existen.
+
+        asyncpg no permite múltiples comandos en un solo prepared statement,
+        así que ejecutamos cada sentencia (CREATE TABLE, cada CREATE INDEX)
+        de forma individual en lugar de enviar el bloque entero de golpe.
+        """
+        statements = [s.strip() for s in _SCHEMA_SQL.split(";") if s.strip()]
         async with self._engine.begin() as conn:
-            await conn.execute(text(_SCHEMA_SQL))
-        self._log.info("repository_initialized")
+            for statement in statements:
+                await conn.execute(text(statement))
+        self._log.info("repository_initialized", statements=len(statements))
 
     async def store_idea(self, idea: Idea) -> Idea:
         """Almacena o actualiza una idea (upsert)."""
