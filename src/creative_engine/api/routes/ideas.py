@@ -141,6 +141,32 @@ async def _attach_reports(families: list) -> None:
         await llm.close()
 
 
+@router.post("/ideas/{idea_id}/report")
+async def generate_report(idea_id: str, request: Request) -> dict:
+    """Genera un informe ejecutivo para una idea (una llamada LLM, bajo demanda)."""
+    from ...agents.writer import WriterAgent
+    from ...core.config import get_settings
+    from ...llm.provider import LLMProvider
+
+    repo: IdeaRepository = request.app.state.repository
+    try:
+        idea = await repo.get_idea(idea_id)
+    except IdeaNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    settings = get_settings()
+    if not settings.llm:
+        raise HTTPException(status_code=503, detail="No hay proveedor LLM configurado")
+
+    llm = LLMProvider(next(iter(settings.llm.values())))
+    try:
+        report = await WriterAgent(llm).write_report(idea)
+    finally:
+        await llm.close()
+
+    return {"idea_id": idea_id, "title": idea.title, "report": report}
+
+
 @router.get("/stats")
 async def get_stats(request: Request, run_id: str | None = None) -> dict:
     """Estadísticas globales o por ejecución."""

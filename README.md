@@ -67,18 +67,29 @@ creative-engine evolve \
   --population 12 --generations 3 \
   --no-db
 
-# 5. O servidor API
-creative-engine serve       # → http://localhost:8000/docs
+# 5. O servidor API + panel web
+creative-engine serve       # → http://localhost:8000  (panel)
+                            # → http://localhost:8000/docs  (API)
 ```
+
+## Panel web
+
+Servido en `http://localhost:8000` cuando el motor está en marcha. Una sola pantalla, sin jerga técnica, que fluye entre tres momentos:
+
+1. **Pregunta** — un campo grande ("¿Qué necesitas resolver?"), selector de ámbito (General / Producto / Marketing) y el botón *Generar ideas*.
+2. **En vivo** — barra de progreso real y las ideas apareciendo agrupadas por enfoque conforme el motor las descubre (streaming SSE). La espera deja de ser muerta.
+3. **Resultado** — el abanico organizado: "N enfoques distintos, el mejor de cada uno". Cada tarjeta expande sus variantes y ofrece *Generar informe* bajo demanda.
 
 ## API
 
 | Endpoint | Descripción |
 |---|---|
-| `POST /api/v1/evolution/start` | Ejecuta una evolución y devuelve las top ideas |
+| `POST /api/v1/evolution/stream` | **Streaming SSE**: lanza la evolución y transmite el progreso e ideas en vivo |
+| `POST /api/v1/evolution/start` | Ejecuta una evolución (síncrono) y devuelve las top ideas |
 | `GET /api/v1/evolution/{run_id}` | Resumen de una ejecución persistida |
 | `GET /api/v1/runs/{run_id}/elites` | El abanico completo de ideas élite |
-| `GET /api/v1/runs/{run_id}/families` | Élites agrupadas en familias automáticas de enfoques (`?with_reports=true` para informe por familia) |
+| `GET /api/v1/runs/{run_id}/families` | Élites agrupadas en familias automáticas de enfoques |
+| `POST /api/v1/ideas/{idea_id}/report` | Informe ejecutivo de una idea (bajo demanda) |
 | `GET /api/v1/ideas/{idea_id}` | Detalle, relacionadas y linaje evolutivo |
 | `GET /api/v1/memory/recommendations/{idea_id}` | Ideas relacionadas (similitud + diversidad) |
 | `GET /api/v1/stats` | Estadísticas globales o por run |
@@ -104,16 +115,16 @@ src/creative_engine/
 ├── agents/        # generador, evaluadores (utilidad/viabilidad/mercado), crítico, escritor
 ├── llm/           # abstracción de proveedores OpenAI-compatibles
 ├── memory/        # repositorio PostgreSQL, grafo Neo4j, recomendación
-└── api/           # FastAPI: evolución, ideas, memoria
+└── api/           # FastAPI: evolución, streaming SSE, ideas, memoria
+    └── static/    # panel web (index.html + app.js)
 ```
 
 ## Roadmap post-MVP
 
 1. Búsqueda vectorial real con pgvector (el schema ya lo contempla)
-2. Dashboard con visualización 2D/3D del espacio de comportamiento
-3. Streaming SSE del progreso de la evolución
-4. Coevolución adversaria (Generational Adversarial MAP-Elites, arXiv:2505.06617)
-5. Learned QD para meta-aprendizaje de reglas de exploración (arXiv:2502.02190)
+2. Persistencia del progreso del stream para reconexión (reload sin perder el run)
+3. Coevolución adversaria (Generational Adversarial MAP-Elites, arXiv:2505.06617)
+4. Learned QD para meta-aprendizaje de reglas de exploración (arXiv:2502.02190)
 
 ## Licencia
 

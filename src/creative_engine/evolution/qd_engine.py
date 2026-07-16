@@ -41,6 +41,17 @@ from .mutation import MutationEngine
 
 logger = structlog.get_logger(__name__)
 
+# Callback opcional invocado tras cada generación con (generation, cells).
+# Permite a consumidores externos (p.ej. el stream SSE) obtener el abanico
+# de familias en vivo sin acoplar el motor a la capa de transporte.
+from collections.abc import Awaitable, Callable  # noqa: E402
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from ..core.models import MAPElitesCell
+
+GenerationCallback = Callable[[int, "list[MAPElitesCell]"], Awaitable[None]]
+
 
 class QDEngine:
     """Motor Quality-Diversity que orquesta el ciclo evolutivo completo."""
@@ -53,6 +64,7 @@ class QDEngine:
         crossover: CrossoverEngine,
         encoder: IdeaEncoder,
         repository: IdeaRepository | None = None,
+        on_generation: GenerationCallback | None = None,
     ) -> None:
         self._generator = generator
         self._evaluator = evaluator
@@ -60,6 +72,7 @@ class QDEngine:
         self._crossover = crossover
         self._encoder = encoder
         self._repository = repository
+        self._on_generation = on_generation
         self._bus = get_event_bus()
         self._settings = get_settings()
         self._rng = np.random.default_rng()
@@ -160,10 +173,17 @@ class QDEngine:
                             "coverage": archive.coverage,
                             "qd_score": archive.qd_score,
                             "best_fitness": archive.best_fitness,
+                            "elite_count": len(archive.occupied_cells),
                         },
                         source="QDEngine",
                     )
                 )
+
+                if self._on_generation is not None:
+                    try:
+                        await self._on_generation(gen, archive.occupied_cells)
+                    except Exception as cb_err:
+                        self._log.warning("on_generation_callback_failed", error=str(cb_err))
 
                 if gen_time > self._settings.evolution.max_generation_time_seconds:
                     self._log.warning("generation_timeout", gen=gen, elapsed=gen_time)

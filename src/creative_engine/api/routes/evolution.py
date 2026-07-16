@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-async def _build_qd_engine(request: Request) -> QDEngine:
+async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
     """Construye el motor QD con todas sus dependencias."""
     from ...agents.evaluator_orchestrator import EvaluatorOrchestrator
     from ...agents.feasibility import FeasibilityAgent
@@ -58,6 +58,7 @@ async def _build_qd_engine(request: Request) -> QDEngine:
         crossover=CrossoverEngine(llm, max_concurrent=first_config.max_concurrent),
         encoder=IdeaEncoder(),
         repository=request.app.state.repository,
+        on_generation=on_generation,
     )
 
 

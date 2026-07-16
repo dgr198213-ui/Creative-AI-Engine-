@@ -62,14 +62,30 @@ def create_app() -> FastAPI:
     from .routes.evolution import router as evolution_router
     from .routes.ideas import router as ideas_router
     from .routes.memory import router as memory_router
+    from .routes.stream import router as stream_router
 
     app.include_router(evolution_router, prefix="/api/v1", tags=["Evolution"])
+    app.include_router(stream_router, prefix="/api/v1", tags=["Streaming"])
     app.include_router(ideas_router, prefix="/api/v1", tags=["Ideas"])
     app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "engine": f"Creative AI Engine v{__version__}"}
+
+    # Panel web (una sola pantalla) servido como estáticos
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+        @app.get("/", include_in_schema=False)
+        async def index() -> FileResponse:
+            return FileResponse(str(static_dir / "index.html"))
 
     return app
 

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Creative AI Engine — Explora enfoques</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --ink:#0f1e24;          /* fondo tinta azul-verdoso profundo */
+  --ink-2:#152a32;        /* superficie elevada */
+  --ink-3:#1d3941;        /* borde sutil */
+  --paper:#f2ede3;        /* texto claro cálido */
+  --paper-dim:#a9b4b2;    /* texto secundario */
+  --amber:#e8a13c;        /* acento: descubrimiento */
+  --amber-soft:#3a2f1c;   /* halo ámbar tenue */
+  --teal:#5bbfad;         /* segundo acento frío para métricas */
+  --radius:14px;
+  --maxw:1080px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--ink);
+  color:var(--paper);
+  font-family:'Inter',system-ui,sans-serif;
+  line-height:1.55;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:clamp(24px,5vw,64px) clamp(20px,4vw,40px)}
+
+/* ---- cabecera ---- */
+.masthead{display:flex;align-items:baseline;gap:14px;margin-bottom:clamp(40px,7vw,72px)}
+.mark{
+  width:34px;height:34px;flex:none;position:relative;
+}
+.mark::before,.mark::after{
+  content:"";position:absolute;inset:0;border-radius:50%;
+  border:1.5px solid var(--amber);
+}
+.mark::after{transform:scale(.5);border-color:var(--teal);opacity:.8}
+.brand{font-family:'Fraunces',serif;font-weight:500;font-size:1.15rem;letter-spacing:.01em}
+.brand small{display:block;font-family:'Inter';font-weight:400;font-size:.72rem;color:var(--paper-dim);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+
+/* ================= ESTADO 1: PREGUNTA ================= */
+.ask{max-width:720px;margin:0 auto;text-align:center}
+.ask h1{
+  font-family:'Fraunces',serif;
+  font-weight:400;
+  font-size:clamp(2rem,5.5vw,3.4rem);
+  line-height:1.08;
+  letter-spacing:-.01em;
+  margin-bottom:14px;
+}
+.ask h1 em{font-style:italic;color:var(--amber)}
+.ask .sub{color:var(--paper-dim);font-size:1.02rem;margin-bottom:38px;max-width:520px;margin-left:auto;margin-right:auto}
+.field{
+  position:relative;text-align:left;
+}
+.field textarea{
+  width:100%;min-height:130px;resize:vertical;
+  background:var(--ink-2);
+  border:1px solid var(--ink-3);
+  border-radius:var(--radius);
+  color:var(--paper);
+  font-family:'Inter';font-size:1.05rem;line-height:1.5;
+  padding:20px 22px;
+  transition:border-color .2s,box-shadow .2s;
+}
+.field textarea::placeholder{color:#6c7a78}
+.field textarea:focus{
+  outline:none;
+  border-color:var(--amber);
+  box-shadow:0 0 0 4px var(--amber-soft);
+}
+.controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:20px}
+.scope{display:flex;gap:8px;flex-wrap:wrap}
+.chip{
+  background:transparent;border:1px solid var(--ink-3);color:var(--paper-dim);
+  border-radius:999px;padding:9px 18px;font-size:.9rem;font-family:'Inter';
+  cursor:pointer;transition:all .18s;
+}
+.chip:hover{border-color:var(--paper-dim);color:var(--paper)}
+.chip[aria-pressed="true"]{
+  background:var(--amber);border-color:var(--amber);color:#241a08;font-weight:500;
+}
+.go{
+  margin-left:auto;
+  background:var(--paper);color:var(--ink);
+  border:none;border-radius:999px;
+  padding:13px 30px;font-size:1rem;font-weight:600;font-family:'Inter';
+  cursor:pointer;transition:transform .12s,background .2s;
+  display:inline-flex;align-items:center;gap:9px;
+}
+.go:hover{transform:translateY(-1px)}
+.go:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.go .dot{width:7px;height:7px;border-radius:50%;background:var(--amber)}
+.hint{margin-top:26px;font-size:.85rem;color:#6c7a78}
+.examples{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.ex{
+  background:none;border:none;color:var(--teal);font-family:'Inter';font-size:.86rem;
+  cursor:pointer;padding:4px 6px;border-bottom:1px dashed transparent;transition:border-color .2s;
+}
+.ex:hover{border-bottom-color:var(--teal)}
+
+/* ================= ESTADO 2: EN VIVO ================= */
+.live{display:none}
+.live.on{display:block}
+.live-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+.live-q{font-family:'Fraunces',serif;font-size:clamp(1.3rem,3vw,1.9rem);font-weight:400;line-height:1.15}
+.live-status{font-size:.9rem;color:var(--amber);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar{height:4px;background:var(--ink-3);border-radius:999px;overflow:hidden;margin:16px 0 6px}
+.bar>span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--amber));transition:width .6s ease}
+.live-note{font-size:.82rem;color:var(--paper-dim);margin-bottom:32px}
+
+/* constelaciones de familias */
+.families{display:grid;gap:18px}
+.family{
+  background:var(--ink-2);
+  border:1px solid var(--ink-3);
+  border-radius:var(--radius);
+  padding:22px 24px;
+  animation:rise .5s ease both;
+}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.family-top{display:flex;align-items:flex-start;gap:16px}
+.family-idx{
+  font-family:'Fraunces',serif;font-size:1.5rem;color:var(--amber);
+  line-height:1;flex:none;width:34px;
+}
+.family-body{flex:1;min-width:0}
+.family-title{font-family:'Fraunces',serif;font-size:1.22rem;font-weight:500;line-height:1.2;margin-bottom:6px}
+.family-desc{color:var(--paper-dim);font-size:.94rem;margin-bottom:14px}
+.family-adv{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px}
+.tag{background:var(--ink-3);color:var(--paper);border-radius:7px;padding:4px 10px;font-size:.8rem}
+.family-meta{display:flex;gap:20px;font-size:.8rem;color:var(--paper-dim);align-items:center;flex-wrap:wrap}
+.meta-val{color:var(--teal);font-variant-numeric:tabular-nums;font-weight:500}
+.variants{margin-top:14px;border-top:1px solid var(--ink-3);padding-top:14px}
+.variants summary{cursor:pointer;font-size:.85rem;color:var(--paper-dim);list-style:none;user-select:none}
+.variants summary::-webkit-details-marker{display:none}
+.variants summary::before{content:"▸ ";color:var(--amber)}
+.variants[open] summary::before{content:"▾ "}
+.variants ul{list-style:none;margin-top:10px;display:grid;gap:6px}
+.variants li{font-size:.9rem;color:var(--paper);padding-left:14px;position:relative}
+.variants li::before{content:"";position:absolute;left:0;top:.6em;width:5px;height:5px;border-radius:50%;background:var(--teal)}
+.report-btn{
+  margin-top:14px;background:transparent;border:1px solid var(--amber);color:var(--amber);
+  border-radius:999px;padding:8px 18px;font-size:.85rem;font-family:'Inter';cursor:pointer;transition:all .18s;
+}
+.report-btn:hover{background:var(--amber);color:#241a08}
+.report-out{margin-top:14px;font-size:.92rem;color:var(--paper);white-space:pre-wrap;
+  background:var(--ink);border-radius:10px;padding:16px;border:1px solid var(--ink-3);display:none}
+.report-out.on{display:block}
+
+/* barra de acciones final */
+.actions{display:none;margin-top:36px;gap:14px;align-items:center;flex-wrap:wrap}
+.actions.on{display:flex}
+.again{background:var(--amber);color:#241a08;border:none;border-radius:999px;padding:12px 26px;font-weight:600;font-family:'Inter';cursor:pointer;font-size:.95rem}
+.again:hover{filter:brightness(1.05)}
+.summary-line{color:var(--paper-dim);font-size:.9rem}
+
+/* error */
+.err{display:none;background:#2a1618;border:1px solid #5c2b2f;border-radius:var(--radius);padding:18px 22px;color:#f0c9c9;margin-top:24px}
+.err.on{display:block}
+.err b{color:#f4a3a3}
+
+/* skeleton mientras arranca */
+.skeleton{display:grid;gap:18px}
+.sk{background:var(--ink-2);border:1px solid var(--ink-3);border-radius:var(--radius);height:120px;position:relative;overflow:hidden}
+.sk::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.03),transparent);animation:shimmer 1.4s infinite}
+@keyframes shimmer{to{transform:translateX(100%)}}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <div class="mark" aria-hidden="true"></div>
+    <div class="brand">Creative AI Engine<small>Un reto · muchos enfoques</small></div>
+  </header>
+
+  <!-- ESTADO 1 -->
+  <section class="ask" id="ask">
+    <h1>¿Qué necesitas <em>resolver</em>?</h1>
+    <p class="sub">Describe tu reto, proyecto o problema. El motor no dará una sola respuesta: explorará muchos enfoques distintos y te traerá los mejores de cada uno.</p>
+    <div class="field">
+      <textarea id="challenge" placeholder="Ej. Una campaña para lanzar una marca de café sostenible entre jóvenes urbanos…"></textarea>
+    </div>
+    <div class="controls">
+      <div class="scope" role="group" aria-label="Ámbito">
+        <button class="chip" data-domain="generic" aria-pressed="true">General</button>
+        <button class="chip" data-domain="industrial_design" aria-pressed="false">Producto</button>
+        <button class="chip" data-domain="marketing" aria-pressed="false">Marketing</button>
+      </div>
+      <button class="go" id="go" disabled><span class="dot"></span>Generar ideas</button>
+    </div>
+    <p class="hint">Tardará un par de minutos: las ideas irán apareciendo conforme el motor las descubre.</p>
+    <div class="examples" id="examples">
+      <button class="ex">Reducir el desperdicio de comida en un restaurante</button>
+      <button class="ex">Una app para que mayores no se sientan solos</button>
+      <button class="ex">Nuevo formato de evento cultural en mi ciudad</button>
+    </div>
+  </section>
+
+  <!-- ESTADO 2/3 -->
+  <section class="live" id="live">
+    <div class="live-head">
+      <div class="live-q" id="liveQ"></div>
+      <div class="live-status" id="status">Preparando…</div>
+    </div>
+    <div class="bar"><span id="progress"></span></div>
+    <p class="live-note" id="note">Generando la primera oleada de ideas…</p>
+
+    <div class="skeleton" id="skeleton">
+      <div class="sk"></div><div class="sk"></div><div class="sk"></div>
+    </div>
+
+    <div class="families" id="families"></div>
+
+    <div class="err" id="err"></div>
+
+    <div class="actions" id="actions">
+      <button class="again" id="again">Explorar otro reto</button>
+      <span class="summary-line" id="summary"></span>
+    </div>
+  </section>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
