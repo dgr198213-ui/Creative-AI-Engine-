@@ -91,3 +91,26 @@ async def test_report_on_demand(app_client) -> None:
             r = await client.post(f"/api/v1/ideas/{idea.id}/report")
     assert r.status_code == 200
     assert "simulado" in r.json()["report"]
+
+
+async def test_history_endpoint_503_without_repo() -> None:
+    """Sin persistencia, los endpoints de histórico responden 503 claro."""
+    from httpx import ASGITransport, AsyncClient
+
+    s = Settings.load()
+    s.llm = {"default": LLMProviderConfig(name="sim", api_key=config.SecretStr("x"))}
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+    app.state.repository = None  # simula BD no disponible
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/v1/ideas/idea_x")
+        assert r.status_code == 503
+        assert "persistencia" in r.json()["detail"].lower()
+
+        # el panel y health siguen funcionando sin BD
+        assert (await client.get("/")).status_code == 200
+        assert (await client.get("/health")).json()["status"] == "ok"

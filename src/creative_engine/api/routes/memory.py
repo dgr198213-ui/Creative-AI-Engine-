@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from ...core.exceptions import IdeaNotFoundError
 from ...memory.recommendation import RecommendationEngine
-from ...memory.repository import IdeaRepository
+from ..deps import require_repo
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ async def recommend(
     diversity_weight: float = Query(default=0.3, ge=0.0, le=1.0),
 ) -> dict:
     """Recomienda ideas relacionadas (similitud semántica + diversidad)."""
-    repo: IdeaRepository = request.app.state.repository
+    repo = require_repo(request)
 
     try:
         idea = await repo.get_idea(idea_id)

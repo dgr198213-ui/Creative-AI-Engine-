@@ -17,20 +17,47 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Lifecycle: inicializar y limpiar recursos."""
+    """Lifecycle: inicializar y limpiar recursos.
+
+    El arranque tolera que la base de datos no esté lista todavía
+    (Railway/PaaS no garantizan orden de arranque): reintenta la
+    inicialización con backoff y, si aun así falla, arranca sin
+    persistencia en vez de caerse — el motor sigue devolviendo ideas.
+    """
+    import asyncio
+
     settings = get_settings()
     logger.info("starting_creative_engine", debug=settings.debug)
 
     from ..memory.repository import IdeaRepository
 
-    repo = IdeaRepository()
-    await repo.initialize()
+    repo: IdeaRepository | None = None
+    for attempt in range(1, 6):
+        try:
+            candidate = IdeaRepository()
+            await candidate.initialize()
+            repo = candidate
+            break
+        except Exception as e:
+            wait = min(2**attempt, 20)
+            logger.warning(
+                "repository_init_retry",
+                attempt=attempt,
+                wait_s=wait,
+                error=str(e),
+            )
+            await asyncio.sleep(wait)
+
+    if repo is None:
+        logger.warning("repository_unavailable_starting_without_persistence")
+
     app.state.repository = repo
 
-    logger.info("creative_engine_ready")
+    logger.info("creative_engine_ready", persistence=repo is not None)
     yield
 
-    await repo.close()
+    if repo is not None:
+        await repo.close()
     logger.info("creative_engine_shutdown")
 
 

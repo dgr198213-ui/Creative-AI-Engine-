@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 
 from ...core.models import DomainName, EvolutionRequest, EvolutionResponse
-from ...memory.repository import IdeaRepository
+from ..deps import require_repo
 
 if TYPE_CHECKING:
     from ...evolution.qd_engine import QDEngine
@@ -99,7 +99,7 @@ async def start_evolution(request_body: EvolutionRequest, request: Request) -> d
 @router.get("/evolution/{run_id}", response_model=EvolutionResponse)
 async def get_evolution_status(run_id: str, request: Request) -> EvolutionResponse:
     """Resumen de una evolución persistida."""
-    repo: IdeaRepository = request.app.state.repository
+    repo = require_repo(request)
     elites = await repo.get_elites_by_run(run_id, limit=50)
     stats = await repo.get_stats(run_id=run_id)
 

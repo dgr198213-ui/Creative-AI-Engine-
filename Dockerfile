@@ -14,6 +14,9 @@ COPY configs/ configs/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
 
+# Railway/PaaS asignan el puerto por la variable PORT.
+ENV PORT=8000
 EXPOSE 8000
 
-CMD ["creative-engine", "serve", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form para que $PORT se expanda en tiempo de ejecución.
+CMD creative-engine serve --host 0.0.0.0 --port ${PORT:-8000}

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from ...core.exceptions import IdeaNotFoundError
 from ...core.models import IdeaDetailResponse
-from ...memory.repository import IdeaRepository
+from ..deps import require_repo
 
 router = APIRouter()
 
@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("/ideas/{idea_id}", response_model=IdeaDetailResponse)
 async def get_idea(idea_id: str, request: Request) -> IdeaDetailResponse:
     """Detalle completo de una idea con relacionadas y linaje."""
-    repo: IdeaRepository = request.app.state.repository
+    repo = require_repo(request)
 
     try:
         idea = await repo.get_idea(idea_id)
@@ -34,7 +34,7 @@ async def get_run_elites(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     """Ideas élite de una ejecución: el abanico de resultados diversos."""
-    repo: IdeaRepository = request.app.state.repository
+    repo = require_repo(request)
     elites = await repo.get_elites_by_run(run_id, limit=limit)
 
     return {
@@ -74,7 +74,7 @@ async def get_run_families(
     """
     from ...evolution.clustering import group_into_families
 
-    repo: IdeaRepository = request.app.state.repository
+    repo = require_repo(request)
     elites = await repo.get_elites_by_run(run_id, limit=limit)
 
     if not elites:
@@ -148,7 +148,7 @@ async def generate_report(idea_id: str, request: Request) -> dict:
     from ...core.config import get_settings
     from ...llm.provider import LLMProvider
 
-    repo: IdeaRepository = request.app.state.repository
+    repo = require_repo(request)
     try:
         idea = await repo.get_idea(idea_id)
     except IdeaNotFoundError as e:
@@ -170,5 +170,5 @@ async def generate_report(idea_id: str, request: Request) -> dict:
 @router.get("/stats")
 async def get_stats(request: Request, run_id: str | None = None) -> dict:
     """Estadísticas globales o por ejecución."""
-    repo: IdeaRepository = request.app.state.repository
+    repo = require_repo(request)
     return await repo.get_stats(run_id=run_id)

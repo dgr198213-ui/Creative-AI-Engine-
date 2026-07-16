@@ -75,6 +75,23 @@ class Settings(BaseSettings):
         """Carga configuración desde env + archivos YAML de dominios."""
         settings = cls()
 
+        # Compatibilidad con PaaS (Railway/Render/Heroku): estos inyectan
+        # DATABASE_URL y REDIS_URL. Los mapeamos a la config del proyecto y
+        # normalizamos el driver de Postgres a asyncpg.
+        import os
+
+        db_url = os.environ.get("DATABASE_URL")
+        if db_url:
+            if db_url.startswith("postgres://"):
+                db_url = db_url.replace("postgres://", "postgresql://", 1)
+            if db_url.startswith("postgresql://"):
+                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            settings.database.postgres_url = db_url
+
+        redis_url = os.environ.get("REDIS_URL")
+        if redis_url:
+            settings.database.redis_url = redis_url
+
         if _CONFIGS_DIR.exists():
             for yaml_file in sorted(_CONFIGS_DIR.glob("*.yaml")):
                 try:
