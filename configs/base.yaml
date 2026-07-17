@@ -36,7 +36,7 @@ allowed_mutations:
   - hybrid
 
 default_population_size: 20
-default_generations: 10
+default_generations: 4
 
 system_prompt: |
   Eres un experto en innovación y creatividad computacional.

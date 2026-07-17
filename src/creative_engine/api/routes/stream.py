@@ -80,7 +80,10 @@ async def stream_evolution(request_body: EvolutionRequest, request: Request) -> 
 
     async def run_and_signal() -> None:
         try:
-            total = request_body.generations or 10
+            from ...core.config import get_settings
+
+            domain_cfg = get_settings().get_domain(request_body.domain)
+            total = request_body.generations or domain_cfg.default_generations
             await queue.put(("start", {"total_generations": total}))
             state = await engine.run_evolution(request_body)
             await queue.put(

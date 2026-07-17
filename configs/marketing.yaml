@@ -31,7 +31,7 @@ allowed_mutations:
   - hybrid
 
 default_population_size: 20
-default_generations: 8
+default_generations: 4
 
 system_prompt: |
   Eres un Director Creativo premiado con experiencia en agencias

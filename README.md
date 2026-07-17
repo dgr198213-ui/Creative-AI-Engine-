@@ -125,6 +125,26 @@ Servido en `http://localhost:8000` cuando el motor está en marcha. Una sola pan
 
 Cada dominio se define en un YAML de `configs/` (prompt del sistema, pesos de evaluación, mutaciones permitidas, tamaño del grid). Incluidos: `generic`, `industrial_design`, `marketing`. Añadir un dominio nuevo = añadir un YAML.
 
+## Benchmark: ¿supera el motor a un buen prompt?
+
+La razón de ser del motor es medible, no un acto de fe. El modo benchmark
+compara, con el mismo reto, el abanico del motor QD contra el de **un
+prompt único bien hecho** pidiendo N ideas diversas (lo que haría un
+usuario hábil de ChatGPT):
+
+```bash
+# Solo diversidad (barato)
+creative-engine benchmark --challenge "Reduce el desperdicio de comida en restaurantes" --ideas 12
+
+# Diversidad + calidad (evalúa ambos brazos con los mismos agentes)
+creative-engine benchmark --challenge "..." --with-quality --output resultado.json
+```
+
+Métricas por brazo: diversidad semántica media y mínima (la mínima detecta
+clones), regiones distintas del espacio de comportamiento cubiertas, y
+opcionalmente fitness medio y máximo. Termina con un veredicto honesto.
+Si el motor no gana, la señal es ajustar el ciclo, no añadir features.
+
 ## Tests
 
 ```bash
