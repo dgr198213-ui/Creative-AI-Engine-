@@ -87,7 +87,7 @@ async def test_report_on_demand(app_client) -> None:
     sim.close = AsyncMock()
 
     async with client:
-        with patch("creative_engine.llm.provider.LLMProvider", return_value=sim):
+        with patch("creative_engine.llm.factory.LLMProvider", return_value=sim):
             r = await client.post(f"/api/v1/ideas/{idea.id}/report")
     assert r.status_code == 200
     assert "simulado" in r.json()["report"]

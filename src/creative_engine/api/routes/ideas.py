@@ -146,7 +146,7 @@ async def generate_report(idea_id: str, request: Request) -> dict:
     """Genera un informe ejecutivo para una idea (una llamada LLM, bajo demanda)."""
     from ...agents.writer import WriterAgent
     from ...core.config import get_settings
-    from ...llm.provider import LLMProvider
+    from ...llm.factory import build_router, role_llms
 
     repo = require_repo(request)
     try:
@@ -158,11 +158,12 @@ async def generate_report(idea_id: str, request: Request) -> dict:
     if not settings.llm:
         raise HTTPException(status_code=503, detail="No hay proveedor LLM configurado")
 
-    llm = LLMProvider(next(iter(settings.llm.values())))
+    router = build_router(settings)
     try:
-        report = await WriterAgent(llm).write_report(idea)
+        writer_llm = role_llms(router)["writer"]
+        report = await WriterAgent(writer_llm).write_report(idea)
     finally:
-        await llm.close()
+        await router.close_all()
 
     return {"idea_id": idea_id, "title": idea.title, "report": report}
 

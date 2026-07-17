@@ -73,6 +73,25 @@ class Settings(BaseSettings):
 
     domains: dict[DomainName, DomainConfig] = Field(default_factory=dict)
 
+    # Enrutamiento por rol. Formato: "rol=prov1,prov2;rol2=prov3".
+    # Ej: "evaluator=groq,gemini;generator=gemini,groq;writer=gemini".
+    # Vacío = todos los roles usan el proveedor por defecto.
+    routing_spec: str = ""
+
+    def routing(self) -> dict[str, list[str]]:
+        """Parsea `routing_spec` a {rol: [proveedores en orden de failover]}."""
+        result: dict[str, list[str]] = {}
+        for part in self.routing_spec.split(";"):
+            part = part.strip()
+            if not part or "=" not in part:
+                continue
+            role, chain = part.split("=", 1)
+            role = role.strip().lower()
+            providers = [p.strip() for p in chain.split(",") if p.strip()]
+            if role and providers:
+                result[role] = providers
+        return result
+
     @classmethod
     def load(cls) -> Settings:
         """Carga configuración desde env + archivos YAML de dominios."""

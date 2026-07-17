@@ -78,7 +78,7 @@ def evolve(challenge: str, domain: str, population: int, generations: int, no_db
         from .evolution.encoders import IdeaEncoder
         from .evolution.mutation import MutationEngine
         from .evolution.qd_engine import QDEngine
-        from .llm.provider import LLMProvider
+        from .llm.factory import build_router, role_llms
         from .memory.repository import IdeaRepository
 
         settings = get_settings()
@@ -89,7 +89,10 @@ def evolve(challenge: str, domain: str, population: int, generations: int, no_db
             return
 
         first_config = next(iter(settings.llm.values()))
-        llm = LLMProvider(first_config)
+        router = build_router(settings)
+        roles = role_llms(router)
+        gen_llm = roles["generator"]
+        eval_llm = roles["evaluator"]
 
         console.print("\n[bold cyan]🧬 Creative AI Engine — Evolución[/bold cyan]")
         console.print(f"   Reto: {challenge[:80]}")
@@ -108,17 +111,17 @@ def evolve(challenge: str, domain: str, population: int, generations: int, no_db
         try:
             evaluator = EvaluatorOrchestrator(
                 agents={
-                    "innovation": InnovationAgent(llm),
-                    "feasibility": FeasibilityAgent(llm),
-                    "market": MarketAgent(llm),
+                    "innovation": InnovationAgent(eval_llm),
+                    "feasibility": FeasibilityAgent(eval_llm),
+                    "market": MarketAgent(eval_llm),
                 }
             )
 
             engine = QDEngine(
-                generator=IdeaGeneratorAgent(llm),
+                generator=IdeaGeneratorAgent(gen_llm),
                 evaluator=evaluator,
-                mutation=MutationEngine(llm, max_concurrent=first_config.max_concurrent),
-                crossover=CrossoverEngine(llm, max_concurrent=first_config.max_concurrent),
+                mutation=MutationEngine(gen_llm, max_concurrent=first_config.max_concurrent),
+                crossover=CrossoverEngine(gen_llm, max_concurrent=first_config.max_concurrent),
                 encoder=IdeaEncoder(),
                 repository=repo,
             )
@@ -136,7 +139,7 @@ def evolve(challenge: str, domain: str, population: int, generations: int, no_db
         finally:
             if repo is not None:
                 await repo.close()
-            await llm.close()
+            await router.close_all()
 
     asyncio.run(_run())
 

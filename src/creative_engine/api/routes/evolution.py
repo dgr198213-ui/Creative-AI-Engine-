@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
-    """Construye el motor QD con todas sus dependencias."""
+    """Construye el motor QD con enrutamiento de LLM por rol y failover."""
     from ...agents.evaluator_orchestrator import EvaluatorOrchestrator
     from ...agents.feasibility import FeasibilityAgent
     from ...agents.generator import IdeaGeneratorAgent
@@ -30,7 +30,7 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
     from ...evolution.encoders import IdeaEncoder
     from ...evolution.mutation import MutationEngine
     from ...evolution.qd_engine import QDEngine
-    from ...llm.provider import LLMProvider
+    from ...llm.factory import build_router, role_llms
 
     settings = get_settings()
 
@@ -40,26 +40,35 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
             detail="No hay proveedores LLM configurados (CREATIVE_LLM__*)",
         )
 
-    first_config = next(iter(settings.llm.values()))
-    llm = LLMProvider(first_config)
+    router = build_router(settings)
+    roles = role_llms(router)
+    gen_llm = roles["generator"]
+    eval_llm = roles["evaluator"]
+
+    # Concurrencia base tomada del primer proveedor (los frenos reales
+    # viven en cada LLMProvider vía semáforo y min_interval).
+    max_concurrent = next(iter(settings.llm.values())).max_concurrent
 
     evaluator = EvaluatorOrchestrator(
         agents={
-            "innovation": InnovationAgent(llm),
-            "feasibility": FeasibilityAgent(llm),
-            "market": MarketAgent(llm),
+            "innovation": InnovationAgent(eval_llm),
+            "feasibility": FeasibilityAgent(eval_llm),
+            "market": MarketAgent(eval_llm),
         }
     )
 
-    return QDEngine(
-        generator=IdeaGeneratorAgent(llm),
+    engine = QDEngine(
+        generator=IdeaGeneratorAgent(gen_llm),
         evaluator=evaluator,
-        mutation=MutationEngine(llm, max_concurrent=first_config.max_concurrent),
-        crossover=CrossoverEngine(llm, max_concurrent=first_config.max_concurrent),
+        mutation=MutationEngine(gen_llm, max_concurrent=max_concurrent),
+        crossover=CrossoverEngine(gen_llm, max_concurrent=max_concurrent),
         encoder=IdeaEncoder(),
         repository=request.app.state.repository,
         on_generation=on_generation,
     )
+    # Guardamos el router para cerrarlo tras el run.
+    engine._llm_router = router  # type: ignore[attr-defined]
+    return engine
 
 
 @router.post("/evolution/start")
@@ -70,7 +79,12 @@ async def start_evolution(request_body: EvolutionRequest, request: Request) -> d
     grandes usar el CLI o reducir población/generaciones.
     """
     engine = await _build_qd_engine(request)
-    state = await engine.run_evolution(request_body)
+    try:
+        state = await engine.run_evolution(request_body)
+    finally:
+        router = getattr(engine, "_llm_router", None)
+        if router is not None:
+            await router.close_all()
 
     top_ideas = sorted(state.archive, key=lambda c: c.fitness, reverse=True)[:10]
 

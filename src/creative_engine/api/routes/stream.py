@@ -98,6 +98,9 @@ async def stream_evolution(request_body: EvolutionRequest, request: Request) -> 
             logger.error("stream_evolution_failed", error=str(e))
             await queue.put(("error", {"message": str(e)}))
         finally:
+            router = getattr(engine, "_llm_router", None)
+            if router is not None:
+                await router.close_all()
             await queue.put(("__end__", {}))
 
     async def event_generator() -> AsyncGenerator[str, None]:

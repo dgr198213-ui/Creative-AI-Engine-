@@ -41,6 +41,33 @@ Abanico final de ideas élite diversas
 | **Mutación/cruce guiados por LLM** | Operadores semánticos coherentes en lugar de aleatorios (enfoque "Evolutionary Thoughts", arXiv:2505.05756). |
 | **Defaults económicos** (población 20 × 10 generaciones) | Cada idea ≈ 4 llamadas LLM. Los defaults mantienen un run en cientos de llamadas, no decenas de miles. |
 
+## Enrutamiento multi-proveedor (opcional)
+
+El motor puede usar **varios proveedores LLM a la vez**, asignando cada rol
+al modelo que más le conviene, con **failover automático**: si un proveedor
+se satura (rate limit / 503), la petición salta al siguiente de su lista.
+
+Roles: `generator` (creatividad), `evaluator` (volumen, ≈75% de las
+llamadas → conviene un modelo rápido) y `writer` (redacción).
+
+Ejemplo: Gemini para generar, Groq (rápido, free tier generoso) para
+evaluar, con failover cruzado. Solo variables de entorno, sin tocar código:
+
+```bash
+# Proveedor Gemini
+CREATIVE_LLM__GEMINI__API_KEY=...
+CREATIVE_LLM__GEMINI__BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+CREATIVE_LLM__GEMINI__MODEL=gemini-flash-latest
+# Proveedor Groq
+CREATIVE_LLM__GROQ__API_KEY=...
+CREATIVE_LLM__GROQ__BASE_URL=https://api.groq.com/openai/v1
+CREATIVE_LLM__GROQ__MODEL=llama-3.3-70b-versatile
+# Enrutado por rol con failover
+CREATIVE_ROUTING_SPEC=generator=gemini,groq;evaluator=groq,gemini;writer=gemini
+```
+
+Con un solo proveedor no hace falta configurar nada: todos los roles lo usan.
+
 ## Requisitos
 
 - Python ≥ 3.12
