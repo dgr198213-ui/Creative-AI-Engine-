@@ -173,3 +173,81 @@ async def get_stats(request: Request, run_id: str | None = None) -> dict:
     """Estadísticas globales o por ejecución."""
     repo = require_repo(request)
     return await repo.get_stats(run_id=run_id)
+
+
+@router.get("/runs/{run_id}/export")
+async def export_run_markdown(
+    run_id: str,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=300),
+    distance_threshold: float = Query(default=0.25, ge=0.05, le=1.0),
+):
+    """Exporta el abanico de un run como informe Markdown descargable.
+
+    El entregable de investigación: familias de enfoques con su mejor idea,
+    ventajas, limitaciones y métricas, listo para compartir o archivar.
+    """
+    from datetime import UTC, datetime
+
+    from fastapi.responses import PlainTextResponse
+
+    from ...evolution.clustering import group_into_families
+
+    repo = require_repo(request)
+    elites = await repo.get_elites_by_run(run_id, limit=limit)
+    if not elites:
+        raise HTTPException(status_code=404, detail=f"Sin élites para el run {run_id}")
+
+    families = group_into_families(elites, distance_threshold=distance_threshold)
+    date = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+    lines: list[str] = [
+        "# Exploración creativa — informe de enfoques",
+        "",
+        f"- **Run:** `{run_id}`",
+        f"- **Fecha:** {date}",
+        f"- **Ideas élite:** {len(elites)} · **Enfoques distintos:** {len(families)}",
+        "",
+        "Cada enfoque agrupa ideas semánticamente próximas; se muestra la mejor "
+        "de cada grupo. La *originalidad* es la distancia semántica objetiva al "
+        "resto del archivo (no un juicio del modelo).",
+        "",
+    ]
+
+    for i, fam in enumerate(families, 1):
+        rep = fam.representative
+        e = rep.evaluation
+        lines += [f"## {i:02d}. {rep.title}", ""]
+        lines += [rep.description, ""]
+        if rep.advantages:
+            lines.append("**Ventajas:**")
+            lines += [f"- {a}" for a in rep.advantages]
+            lines.append("")
+        if rep.limitations:
+            lines.append("**Limitaciones:**")
+            lines += [f"- {li}" for li in rep.limitations]
+            lines.append("")
+        if e is not None:
+            lines += [
+                "| Solidez | Originalidad | Utilidad | Viabilidad | Mercado |",
+                "|---|---|---|---|---|",
+                f"| {rep.fitness:.0%} | {e.novelty:.0%} | {e.utility:.0%} "
+                f"| {e.feasibility:.0%} | {e.market_fit:.0%} |",
+                "",
+            ]
+        others = [m for m in fam.members if m.id != rep.id]
+        if others:
+            lines.append(f"**Variantes de este enfoque ({len(others)}):**")
+            lines += [f"- {m.title}" for m in others]
+            lines.append("")
+        lines.append("")
+
+    lines += ["---", "", "*Generado por Creative AI Engine — un reto, muchos enfoques.*", ""]
+
+    return PlainTextResponse(
+        "\n".join(lines),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="enfoques_{run_id[:12]}.md"'
+        },
+    )

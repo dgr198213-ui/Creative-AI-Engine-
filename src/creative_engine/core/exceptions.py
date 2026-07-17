@@ -24,6 +24,10 @@ class LLMRateLimitError(LLMError):
     """Se excedió el rate limit del proveedor."""
 
 
+class LLMAuthError(LLMError):
+    """API key inválida o sin permisos en el proveedor."""
+
+
 class LLMResponseParseError(LLMError):
     """La respuesta del LLM no pudo parsearse al formato esperado."""
 

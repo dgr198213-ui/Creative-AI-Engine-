@@ -20,7 +20,7 @@ from tenacity import (
 )
 
 from ..core.config import LLMProviderConfig
-from ..core.exceptions import LLMError, LLMRateLimitError
+from ..core.exceptions import LLMAuthError, LLMError, LLMRateLimitError
 
 logger = structlog.get_logger(__name__)
 
@@ -152,6 +152,13 @@ class LLMProvider:
             raise LLMRateLimitError(
                 f"Rate limit excedido en {self._config.name}",
                 details={"status": 429, "provider": self._config.name},
+            )
+
+        if resp.status_code in (401, 403):
+            raise LLMAuthError(
+                f"API key inválida o sin permisos en {self._config.name} "
+                f"(HTTP {resp.status_code}). Revisa la variable de la clave.",
+                details={"status": resp.status_code, "provider": self._config.name},
             )
 
         # 503/500: sobrecarga o error temporal del proveedor (p.ej. Gemini

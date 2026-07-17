@@ -151,6 +151,7 @@ body{
   border-radius:999px;padding:8px 18px;font-size:.85rem;font-family:'Inter';cursor:pointer;transition:all .18s;
 }
 .report-btn:hover{background:var(--amber);color:#241a08}
+a.report-btn{text-decoration:none;display:inline-block}
 .report-out{margin-top:14px;font-size:.92rem;color:var(--paper);white-space:pre-wrap;
   background:var(--ink);border-radius:10px;padding:16px;border:1px solid var(--ink-3);display:none}
 .report-out.on{display:block}
@@ -227,6 +228,7 @@ body{
 
     <div class="actions" id="actions">
       <button class="again" id="again">Explorar otro reto</button>
+      <a class="report-btn" id="download" hidden download>Descargar informe (.md)</a>
       <span class="summary-line" id="summary"></span>
     </div>
   </section>

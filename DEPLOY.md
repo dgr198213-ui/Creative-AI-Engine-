@@ -61,3 +61,23 @@ El streaming mantiene un proceso vivo durante cada run. En Railway el coste
 es por uso (vCPU/RAM por segundo). Un uso moderado suele quedar en el entorno
 de 5–20 USD/mes; vigila los runs muy grandes (población × generaciones altas),
 que alargan el proceso y multiplican las llamadas LLM.
+
+## Troubleshooting rápido
+
+Ante cualquier fallo, primero el diagnóstico (Console de Railway):
+
+```bash
+creative-engine doctor
+```
+
+Te dirá directamente: qué proveedor tiene la clave mal (401), cuál está
+saturado, si `CREATIVE_ROUTING_SPEC` tiene erratas y si la BD responde.
+O desde el navegador: `https://<tu-dominio>/api/v1/diagnostics?check_llm=true`.
+
+Errores típicos ya vistos:
+- `401 Invalid API Key` → la clave de ese proveedor está mal copiada
+  (espacios, comillas) o revocada. Regenera y pega de nuevo.
+- `routing={}` en los logs → falta `CREATIVE_ROUTING_SPEC` o tiene errata;
+  con 2+ proveedores el failover funciona igualmente en orden de definición.
+- `Rate limit excedido` → free tier saturado; el failover salta al otro
+  proveedor si existe.

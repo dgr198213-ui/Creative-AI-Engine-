@@ -86,6 +86,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    from .routes.diagnostics import router as diagnostics_router
     from .routes.evolution import router as evolution_router
     from .routes.ideas import router as ideas_router
     from .routes.memory import router as memory_router
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(stream_router, prefix="/api/v1", tags=["Streaming"])
     app.include_router(ideas_router, prefix="/api/v1", tags=["Ideas"])
     app.include_router(memory_router, prefix="/api/v1", tags=["Memory"])
+    app.include_router(diagnostics_router, prefix="/api/v1", tags=["Diagnostics"])
 
     @app.get("/health")
     async def health() -> dict[str, str]:

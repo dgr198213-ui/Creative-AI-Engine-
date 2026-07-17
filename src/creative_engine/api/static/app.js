@@ -211,6 +211,11 @@ function finish(data) {
   state.running = false;
   const n = (data.families || []).length;
   $("actions").classList.add("on");
+  if (data.run_id) {
+    const dl = $("download");
+    dl.href = `/api/v1/runs/${data.run_id}/export`;
+    dl.hidden = false;
+  }
   $("summary").textContent = `${data.total_ideas || 0} ideas exploradas · ${n} enfoque${n === 1 ? "" : "s"} destacado${n === 1 ? "" : "s"}.`;
 }
 
@@ -224,6 +229,7 @@ function showError(msg) {
 }
 
 function reset() {
+  $("download").hidden = true;
   $("live").classList.remove("on");
   $("ask").style.display = "block";
   challengeEl.value = "";

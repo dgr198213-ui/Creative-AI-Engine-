@@ -31,7 +31,7 @@ from typing import Any
 
 import structlog
 
-from ..core.exceptions import LLMError, LLMRateLimitError
+from ..core.exceptions import LLMAuthError, LLMError, LLMRateLimitError
 from .provider import LLMProvider
 
 logger = structlog.get_logger(__name__)
@@ -109,10 +109,10 @@ class LLMModelRouter:
     async def run(self, role: str, method: str, prompt: str, **kwargs: Any) -> Any:
         """Ejecuta `method` sobre la cadena del rol, con failover.
 
-        Salta al siguiente proveedor solo ante fallos de disponibilidad
-        (rate limit / sobrecarga agotados tras reintentos). Otros errores
-        (p.ej. parseo) se propagan: no tiene sentido reintentar en otro
-        proveedor una respuesta mal formada del prompt.
+        Salta al siguiente proveedor ante fallos de disponibilidad
+        (rate limit / sobrecarga) y de autenticación (clave inválida):
+        una clave rota en un proveedor no debe matar el run si hay otro.
+        Otros errores (p.ej. parseo) se propagan sin failover.
         """
         chain = self._chain_for(role)
         last_error: Exception | None = None
@@ -125,7 +125,7 @@ class LLMModelRouter:
                 if idx > 0:
                     self._log.info("failover_succeeded", role=role, provider=name)
                 return result
-            except LLMRateLimitError as e:
+            except (LLMRateLimitError, LLMAuthError) as e:
                 last_error = e
                 is_last = idx == len(chain) - 1
                 self._log.warning(

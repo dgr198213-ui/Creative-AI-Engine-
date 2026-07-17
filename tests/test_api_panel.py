@@ -114,3 +114,55 @@ async def test_history_endpoint_503_without_repo() -> None:
         # el panel y health siguen funcionando sin BD
         assert (await client.get("/")).status_code == 200
         assert (await client.get("/health")).json()["status"] == "ok"
+
+
+async def test_export_run_markdown() -> None:
+    """El export del run devuelve un informe Markdown con las familias."""
+    from httpx import ASGITransport, AsyncClient
+
+    from creative_engine.core.models import EvaluationScores, Idea, IdeaStatus
+
+    s = Settings.load()
+    s.llm = {"default": LLMProviderConfig(name="sim", api_key=config.SecretStr("x"))}
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+    repo = _NullRepo()
+    app.state.repository = repo
+
+    # simular élites de un run
+    elites = []
+    for i, desc in enumerate(
+        [[0.1, 0.1, 0.1], [0.12, 0.1, 0.1], [0.9, 0.9, 0.9]]
+    ):
+        idea = Idea(
+            title=f"Idea élite {i}",
+            description=f"Descripción de la idea élite número {i} del run.",
+            advantages=["Ventaja"],
+            status=IdeaStatus.ELITE,
+            run_id="run_test",
+        )
+        idea.evaluation = EvaluationScores(utility=0.7, feasibility=0.6, market_fit=0.5)
+        idea.behavior_descriptor = desc
+        elites.append(idea)
+
+    async def fake_get_elites(run_id, limit=50):
+        return elites if run_id == "run_test" else []
+
+    repo.get_elites_by_run = fake_get_elites
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/v1/runs/run_test/export")
+        assert r.status_code == 200
+        assert "text/markdown" in r.headers["content-type"]
+        assert "attachment" in r.headers["content-disposition"]
+        body = r.text
+        assert "# Exploración creativa" in body
+        assert "Idea élite" in body
+        assert "Solidez" in body
+
+        # run inexistente → 404
+        r = await client.get("/api/v1/runs/run_nope/export")
+        assert r.status_code == 404

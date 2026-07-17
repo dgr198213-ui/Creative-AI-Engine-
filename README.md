@@ -119,6 +119,8 @@ Servido en `http://localhost:8000` cuando el motor está en marcha. Una sola pan
 | `POST /api/v1/ideas/{idea_id}/report` | Informe ejecutivo de una idea (bajo demanda) |
 | `GET /api/v1/ideas/{idea_id}` | Detalle, relacionadas y linaje evolutivo |
 | `GET /api/v1/memory/recommendations/{idea_id}` | Ideas relacionadas (similitud + diversidad) |
+| `GET /api/v1/runs/{run_id}/export` | Informe Markdown descargable del abanico de enfoques |
+| `GET /api/v1/diagnostics` | Estado de proveedores, enrutado y BD (`?check_llm=true` verifica claves) |
 | `GET /api/v1/stats` | Estadísticas globales o por run |
 
 ## Dominios
@@ -144,6 +146,22 @@ Métricas por brazo: diversidad semántica media y mínima (la mínima detecta
 clones), regiones distintas del espacio de comportamiento cubiertas, y
 opcionalmente fitness medio y máximo. Termina con un veredicto honesto.
 Si el motor no gana, la señal es ajustar el ciclo, no añadir features.
+
+## Diagnóstico de configuración
+
+Si algo no funciona (claves, enrutado, BD), no lo deduzcas de logs:
+
+```bash
+creative-engine doctor            # verifica claves con una llamada mínima
+creative-engine doctor --no-llm   # solo config y BD, sin llamadas
+```
+
+Detecta claves inválidas (401), proveedores saturados, erratas en
+`CREATIVE_ROUTING_SPEC` (nombres que no existen) y BD caída. También
+disponible en `GET /api/v1/diagnostics` desde el navegador.
+
+Además, el motor es resiliente por diseño: una clave inválida en un
+proveedor hace failover al siguiente en vez de matar el run.
 
 ## Tests
 

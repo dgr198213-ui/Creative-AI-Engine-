@@ -329,3 +329,51 @@ def benchmark(
             console.print(f"Resultado guardado en {output}")
 
     asyncio.run(_run())
+
+
+@cli.command()
+@click.option("--no-llm", is_flag=True, help="No llamar a los proveedores (solo config y BD)")
+def doctor(no_llm: bool) -> None:
+    """Diagnostica la configuración: proveedores, enrutado y base de datos."""
+
+    async def _run() -> None:
+        from .diagnostics import run_doctor
+
+        settings = get_settings()
+        console.print("\n[bold cyan]🩺 Diagnóstico — Creative AI Engine[/bold cyan]\n")
+
+        report = await run_doctor(settings, check_llm=not no_llm)
+
+        # Proveedores definidos
+        if not report["providers_defined"]:
+            console.print("[red]✗ No hay proveedores LLM definidos (CREATIVE_LLM__*)[/red]")
+        else:
+            console.print(f"Proveedores definidos: {', '.join(report['providers_defined'])}")
+
+        # Checks de proveedores
+        for check in report["provider_checks"]:
+            icon = {"ok": "[green]✓[/green]", "rate_limited": "[yellow]⚠[/yellow]"}.get(
+                check["status"], "[red]✗[/red]"
+            )
+            latency = f" ({check['latency_ms']} ms)" if "latency_ms" in check else ""
+            console.print(f"  {icon} {check['provider']}{latency}: {check['detail']}")
+
+        # Enrutado
+        routing = report["routing"]
+        console.print(f"\nCREATIVE_ROUTING_SPEC: {routing['spec_raw']}")
+        if routing["parsed"]:
+            for role, chain in routing["parsed"].items():
+                console.print(f"  {role} → {' → '.join(chain)}")
+        else:
+            console.print(f"  (sin roles: cadena por defecto {routing['default_chain']})")
+        for issue in routing["issues"]:
+            console.print(f"  [yellow]⚠ {issue}[/yellow]")
+
+        # Base de datos
+        db = report["database"]
+        icon = "[green]✓[/green]" if db["status"] == "ok" else "[red]✗[/red]"
+        console.print(f"\nBase de datos: {icon} {db['detail']}")
+
+        console.print()
+
+    asyncio.run(_run())
