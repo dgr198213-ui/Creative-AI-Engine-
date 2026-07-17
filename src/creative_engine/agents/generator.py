@@ -72,7 +72,7 @@ class IdeaGeneratorAgent:
         variation_hint: str = "",
     ) -> list[Idea]:
         """Genera una población de ideas diversas, en lotes de máximo 10."""
-        batch_size = min(count, 10)
+        batch_size = min(count, 5)  # lotes cortos: menos truncamiento de JSON en la respuesta
         all_ideas: list[Idea] = []
 
         batches_needed = (count + batch_size - 1) // batch_size
@@ -122,16 +122,26 @@ class IdeaGeneratorAgent:
         return self._parse_batch(raw, domain)
 
     def _parse_batch(self, raw: str, domain: DomainConfig) -> list[Idea]:
-        json_match = re.search(r"\[[\s\S]*\]", raw)
+        json_match = re.search(r"\[[\s\S]*\]?", raw)
         if not json_match:
             self._log.warning("no_json_array_found", raw_preview=raw[:200])
             return []
 
+        payload = json_match.group(0)
         try:
-            items = json.loads(json_match.group(0))
+            items = json.loads(payload)
         except json.JSONDecodeError as e:
-            self._log.warning("batch_parse_failed", error=str(e))
-            return []
+            # El modelo trunca o malforma arrays largos con frecuencia.
+            # Rescatamos las ideas completas que sí llegaron en vez de
+            # descartar el lote entero.
+            items = self._salvage_array(payload)
+            if items:
+                self._log.info(
+                    "batch_salvaged", recovered=len(items), original_error=str(e)
+                )
+            else:
+                self._log.warning("batch_parse_failed", error=str(e))
+                return []
 
         ideas = []
         for item in items:
@@ -140,6 +150,27 @@ class IdeaGeneratorAgent:
             except Exception as e:
                 self._log.debug("item_parse_skipped", error=str(e))
         return ideas
+
+    @staticmethod
+    def _salvage_array(payload: str) -> list[dict[str, Any]]:
+        """Recorta un array JSON truncado/malformado al último objeto completo.
+
+        Prueba a cerrar el array en cada '}' desde el final hacia atrás;
+        el primer recorte que parsea devuelve las ideas completas recibidas.
+        """
+        cut = payload.rfind("}")
+        attempts = 0
+        while cut != -1 and attempts < 40:
+            candidate = payload[: cut + 1] + "]"
+            try:
+                items = json.loads(candidate)
+                if isinstance(items, list):
+                    return [i for i in items if isinstance(i, dict)]
+                return []
+            except json.JSONDecodeError:
+                cut = payload.rfind("}", 0, cut)
+                attempts += 1
+        return []
 
     def _item_to_idea(self, item: dict[str, Any], domain: DomainConfig) -> Idea:
         vh_data = item.get("value_hypothesis") or {}

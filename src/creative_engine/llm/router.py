@@ -74,7 +74,10 @@ class LLMModelRouter:
             raise LLMError("LLMModelRouter requiere al menos un proveedor")
 
         self._providers = providers
-        self._default_chain: list[str] = [next(iter(providers))]
+        # Cadena por defecto: TODOS los proveedores en orden de definición.
+        # Así, aunque no haya routing configurado, tener un segundo proveedor
+        # ya da failover automático ante saturación del primero.
+        self._default_chain: list[str] = list(providers)
 
         # Cadena por rol; se valida contra proveedores existentes.
         self._routing: dict[str, list[str]] = {}

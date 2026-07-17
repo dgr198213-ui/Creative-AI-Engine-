@@ -42,11 +42,29 @@ class TestModelRouter:
         router = LLMModelRouter(providers)
         assert router._chain_for("evaluator") == ["gemini"]
 
+    def test_default_chain_includes_all_providers(self) -> None:
+        """Sin routing configurado, la cadena por defecto incluye todos los
+        proveedores → failover automático sin configuración."""
+        providers = {"gemini": _provider("gemini"), "groq": _provider("groq")}
+        router = LLMModelRouter(providers)
+        assert router._chain_for("generator") == ["gemini", "groq"]
+
+    async def test_failover_works_without_routing_spec(self) -> None:
+        """Reproduce el fallo de producción: routing={} pero dos proveedores.
+        Antes el failover no saltaba; ahora debe saltar al segundo."""
+        p1 = _provider("gemini")
+        p1.generate.side_effect = LLMRateLimitError("saturado")
+        p2 = _provider("groq", generate_return="respuesta de groq")
+        router = LLMModelRouter({"gemini": p1, "groq": p2})  # sin routing
+        result = await router.for_role("generator").generate("x")
+        assert result == "respuesta de groq"
+
     def test_role_uses_its_chain(self) -> None:
         providers = {"gemini": _provider("gemini"), "groq": _provider("groq")}
         router = LLMModelRouter(providers, routing={"evaluator": ["groq", "gemini"]})
         assert router._chain_for("evaluator") == ["groq", "gemini"]
-        assert router._chain_for("writer") == ["gemini"]  # default = primero
+        # rol sin cadena → default = todos los proveedores (failover automático)
+        assert router._chain_for("writer") == ["gemini", "groq"]
 
     def test_invalid_provider_in_chain_dropped(self) -> None:
         providers = {"gemini": _provider("gemini")}
