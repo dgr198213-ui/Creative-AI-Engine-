@@ -75,3 +75,46 @@ async def test_structured_parses_json_with_preamble() -> None:
         assert data["score"] == 0.5
     finally:
         await provider.close()
+
+
+async def test_network_error_becomes_retryable(monkeypatch) -> None:
+    """Timeouts/errores de red se convierten en LLMRateLimitError (reintentable)."""
+    from unittest.mock import AsyncMock, patch
+
+    import httpx
+
+    from creative_engine.core.exceptions import LLMRateLimitError
+    from creative_engine.llm.provider import LLMProvider
+
+    async def _no_sleep(*a, **k):
+        return None
+
+    monkeypatch.setattr("tenacity.asyncio.sleep", _no_sleep, raising=False)
+    provider = LLMProvider(LLMProviderConfig(name="zai", api_key=SecretStr("k")))
+    # una sola llamada interna sin reintentos: probamos la conversión directa
+    try:
+        with patch.object(
+            provider._client, "post", AsyncMock(side_effect=httpx.ReadError(""))
+        ), pytest.raises(LLMRateLimitError):
+            await provider._call_api.__wrapped__(provider, "hola")
+    finally:
+        await provider.close()
+
+
+async def test_http_error_message_never_empty() -> None:
+    """Un HTTPError sin mensaje debe producir un error con el tipo, no vacío."""
+    from unittest.mock import AsyncMock, patch
+
+    import httpx
+
+    from creative_engine.core.exceptions import LLMError
+
+    provider = LLMProvider(LLMProviderConfig(name="zai", api_key=SecretStr("k")))
+    try:
+        with patch.object(
+            provider._client, "post", AsyncMock(side_effect=httpx.HTTPError(""))
+        ), pytest.raises(LLMError) as exc:
+            await provider._call_api.__wrapped__(provider, "hola")
+        assert "HTTPError" in str(exc.value)  # el tipo aparece aunque el msg sea vacío
+    finally:
+        await provider.close()

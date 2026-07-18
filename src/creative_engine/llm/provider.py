@@ -145,8 +145,20 @@ class LLMProvider:
             resp = await self._client.post("chat/completions", json=payload)
         except httpx.ConnectError:
             raise
+        except (httpx.TimeoutException, httpx.ReadError, httpx.RemoteProtocolError) as e:
+            # Errores de red transitorios: reintentables como una indisponibilidad.
+            raise LLMRateLimitError(
+                f"Fallo de red con {self._config.name}: "
+                f"{type(e).__name__}: {e or 'sin detalle'}",
+                details={"provider": self._config.name, "error_type": type(e).__name__},
+            ) from e
         except httpx.HTTPError as e:
-            raise LLMError(f"Error HTTP con {self._config.name}: {e}") from e
+            # str(e) puede venir vacío en algunos errores → incluir siempre el tipo.
+            detail = str(e) or repr(e) or type(e).__name__
+            raise LLMError(
+                f"Error HTTP con {self._config.name}: {type(e).__name__}: {detail}",
+                details={"provider": self._config.name, "error_type": type(e).__name__},
+            ) from e
 
         if resp.status_code == 429:
             raise LLMRateLimitError(
