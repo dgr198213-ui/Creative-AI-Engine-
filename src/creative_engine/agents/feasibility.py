@@ -46,7 +46,7 @@ class FeasibilityAgent(BaseAgent):
     """Agente que evalúa la viabilidad técnica."""
 
     def __init__(self, llm: LLMProvider) -> None:
-        super().__init__(name="feasibility", llm=llm, timeout_seconds=90.0)
+        super().__init__(name="feasibility", llm=llm, timeout_seconds=60.0)
 
     async def evaluate(
         self, idea: Idea, context: dict[str, Any] | None = None

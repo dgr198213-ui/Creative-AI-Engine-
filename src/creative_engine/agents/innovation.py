@@ -44,7 +44,7 @@ class InnovationAgent(BaseAgent):
     """Agente que evalúa la utilidad y el potencial de mejora."""
 
     def __init__(self, llm: LLMProvider) -> None:
-        super().__init__(name="innovation", llm=llm, timeout_seconds=90.0)
+        super().__init__(name="innovation", llm=llm, timeout_seconds=60.0)
 
     async def evaluate(
         self, idea: Idea, context: dict[str, Any] | None = None

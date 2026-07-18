@@ -113,6 +113,18 @@ class EvaluatorOrchestrator:
                 agent_feedback[result.agent_name] = f"Error: {result.error}"
                 continue
 
+            # Agente combinado: trae las 3 dimensiones en metadata de una vez.
+            if result.agent_name == "combined":
+                for dim in ("utility", "feasibility", "market_fit"):
+                    if dim in result.metadata:
+                        scores_data[dim] = max(0.0, min(1.0, float(result.metadata[dim])))
+                agent_feedback["utility"] = result.feedback
+                if result.metadata.get("feasibility_feedback"):
+                    agent_feedback["feasibility"] = result.metadata["feasibility_feedback"]
+                if result.metadata.get("market_feedback"):
+                    agent_feedback["market"] = result.metadata["market_feedback"]
+                continue
+
             dimension = self.AGENT_DIMENSION_MAP.get(result.agent_name)
             if dimension and result.score is not None:
                 scores_data[dimension] = max(0.0, min(1.0, result.score))

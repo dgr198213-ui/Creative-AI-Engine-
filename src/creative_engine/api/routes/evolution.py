@@ -20,11 +20,9 @@ router = APIRouter()
 
 async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
     """Construye el motor QD con enrutamiento de LLM por rol y failover."""
+    from ...agents.combined_evaluator import CombinedEvaluatorAgent
     from ...agents.evaluator_orchestrator import EvaluatorOrchestrator
-    from ...agents.feasibility import FeasibilityAgent
     from ...agents.generator import IdeaGeneratorAgent
-    from ...agents.innovation import InnovationAgent
-    from ...agents.market import MarketAgent
     from ...core.config import get_settings
     from ...evolution.crossover import CrossoverEngine
     from ...evolution.encoders import IdeaEncoder
@@ -49,12 +47,9 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
     # viven en cada LLMProvider vía semáforo y min_interval).
     max_concurrent = next(iter(settings.llm.values())).max_concurrent
 
+    # Evaluador combinado: 3 dimensiones en 1 llamada (ahorro en free tier).
     evaluator = EvaluatorOrchestrator(
-        agents={
-            "innovation": InnovationAgent(eval_llm),
-            "feasibility": FeasibilityAgent(eval_llm),
-            "market": MarketAgent(eval_llm),
-        }
+        agents={"combined": CombinedEvaluatorAgent(eval_llm)}
     )
 
     engine = QDEngine(

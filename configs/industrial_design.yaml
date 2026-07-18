@@ -32,8 +32,8 @@ allowed_mutations:
   - target_market
   - hybrid
 
-default_population_size: 20
-default_generations: 4
+default_population_size: 8
+default_generations: 3
 
 system_prompt: |
   Eres un diseñador industrial senior con 20 años de experiencia en

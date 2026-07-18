@@ -298,8 +298,8 @@ class DomainConfig(BaseModel):
     allowed_mutations: list[MutationType] = Field(default_factory=lambda: list(MutationType))
 
     # Defaults económicos: ~20 x 10 ≈ cientos de llamadas LLM, no decenas de miles.
-    default_population_size: int = Field(default=20, ge=4, le=10000)
-    default_generations: int = Field(default=4, ge=1, le=1000)
+    default_population_size: int = Field(default=8, ge=4, le=10000)
+    default_generations: int = Field(default=3, ge=1, le=1000)
 
     system_prompt: str = ""
     evaluation_criteria: list[str] = Field(default_factory=list)

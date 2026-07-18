@@ -41,6 +41,27 @@ Abanico final de ideas élite diversas
 | **Mutación/cruce guiados por LLM** | Operadores semánticos coherentes en lugar de aleatorios (enfoque "Evolutionary Thoughts", arXiv:2505.05756). |
 | **Defaults económicos** (población 20 × 10 generaciones) | Cada idea ≈ 4 llamadas LLM. Los defaults mantienen un run en cientos de llamadas, no decenas de miles. |
 
+## Configuración recomendada (free tier estable)
+
+Con un solo proveedor gratuito (p.ej. Gemini), el motor viene ajustado
+para rendir sin saturar límites: población 8 × 3 generaciones y un
+**evaluador combinado** que puntúa utilidad, viabilidad y mercado en una
+sola llamada (en vez de tres). Un run completo son ~40 llamadas LLM, no
+cientos — cabe en el free tier de Gemini.
+
+Variables mínimas:
+
+```bash
+CREATIVE_LLM__DEFAULT__API_KEY=tu-gemini-key
+CREATIVE_LLM__DEFAULT__BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+CREATIVE_LLM__DEFAULT__MODEL=gemini-flash-latest
+CREATIVE_LLM__DEFAULT__MAX_CONCURRENT=2
+CREATIVE_LLM__DEFAULT__MIN_INTERVAL_SECONDS=4.0
+```
+
+Si más adelante añades proveedores válidos, el enrutamiento por rol y el
+failover los aprovechan automáticamente (ver sección siguiente).
+
 ## Enrutamiento multi-proveedor (opcional)
 
 El motor puede usar **varios proveedores LLM a la vez**, asignando cada rol

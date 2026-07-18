@@ -69,11 +69,9 @@ def evolve(challenge: str, domain: str, population: int, generations: int, no_db
     """Ejecuta una evolución desde CLI."""
 
     async def _run() -> None:
+        from .agents.combined_evaluator import CombinedEvaluatorAgent
         from .agents.evaluator_orchestrator import EvaluatorOrchestrator
-        from .agents.feasibility import FeasibilityAgent
         from .agents.generator import IdeaGeneratorAgent
-        from .agents.innovation import InnovationAgent
-        from .agents.market import MarketAgent
         from .evolution.crossover import CrossoverEngine
         from .evolution.encoders import IdeaEncoder
         from .evolution.mutation import MutationEngine
@@ -110,11 +108,7 @@ def evolve(challenge: str, domain: str, population: int, generations: int, no_db
 
         try:
             evaluator = EvaluatorOrchestrator(
-                agents={
-                    "innovation": InnovationAgent(eval_llm),
-                    "feasibility": FeasibilityAgent(eval_llm),
-                    "market": MarketAgent(eval_llm),
-                }
+                agents={"combined": CombinedEvaluatorAgent(eval_llm)}
             )
 
             engine = QDEngine(
