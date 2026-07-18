@@ -290,9 +290,19 @@ class QDEngine:
         if not ideas:
             return
 
-        # 1. Evaluación de calidad en paralelo (agentes LLM)
+        # 1. Evaluación de calidad con concurrencia LIMITADA.
+        # Evaluar todas las ideas a la vez satura los rate limits de los
+        # proveedores (cada idea = 3 llamadas de agente), provocando timeouts
+        # en cascada. Limitamos cuántas ideas se evalúan simultáneamente.
+        max_parallel = self._settings.evolution.max_concurrent_evaluations
+        semaphore = asyncio.Semaphore(max_parallel)
+
+        async def _eval_one(idea: Idea) -> None:
+            async with semaphore:
+                await self._evaluator.evaluate_idea(idea, context)
+
         await asyncio.gather(
-            *(self._evaluator.evaluate_idea(idea, context) for idea in ideas),
+            *(_eval_one(idea) for idea in ideas),
             return_exceptions=True,
         )
 

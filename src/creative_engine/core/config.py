@@ -43,7 +43,7 @@ class DatabaseConfig(BaseModel):
 class EvolutionConfig(BaseModel):
     """Configuración global del motor evolutivo."""
 
-    max_concurrent_evaluations: int = Field(default=10, ge=1, le=100)
+    max_concurrent_evaluations: int = Field(default=3, ge=1, le=100)
     mutation_rate: float = Field(default=0.4, ge=0.0, le=1.0)
     crossover_rate: float = Field(default=0.25, ge=0.0, le=1.0)
     random_injection_rate: float = Field(default=0.1, ge=0.0, le=0.5)
