@@ -118,3 +118,41 @@ async def test_http_error_message_never_empty() -> None:
         assert "HTTPError" in str(exc.value)  # el tipo aparece aunque el msg sea vacío
     finally:
         await provider.close()
+
+
+async def test_extra_body_merged_into_payload() -> None:
+    """extra_body (p.ej. desactivar thinking de GLM) debe llegar al payload."""
+    from unittest.mock import patch
+
+    from creative_engine.llm.provider import LLMProvider
+
+    provider = LLMProvider(
+        LLMProviderConfig(
+            name="zai",
+            api_key=SecretStr("k"),
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+    )
+    captured: dict = {}
+
+    class FakeResp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {},
+                "model": "glm-4.5-flash",
+            }
+
+    async def fake_post(url, json=None):
+        captured.update(json or {})
+        return FakeResp()
+
+    try:
+        with patch.object(provider._client, "post", side_effect=fake_post):
+            await provider._call_api.__wrapped__(provider, "hola")
+        assert captured.get("thinking") == {"type": "disabled"}
+    finally:
+        await provider.close()

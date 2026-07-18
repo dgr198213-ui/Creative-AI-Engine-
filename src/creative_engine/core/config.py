@@ -28,6 +28,10 @@ class LLMProviderConfig(BaseModel):
     # Intervalo mínimo entre peticiones (segundos). Súbelo para APIs con
     # rate limits estrictos como el free tier de Gemini (p.ej. 4.0 = ~15/min).
     min_interval_seconds: float = 0.1
+    # Parámetros extra a incluir en cada petición (JSON). Ej. para desactivar
+    # el modo razonador de los GLM de Z.ai (lentísimo en free tier):
+    # CREATIVE_LLM__ZAI__EXTRA_BODY={"thinking":{"type":"disabled"}}
+    extra_body: dict = Field(default_factory=dict)
 
 
 class DatabaseConfig(BaseModel):

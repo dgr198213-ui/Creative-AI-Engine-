@@ -140,6 +140,8 @@ class LLMProvider:
         }
         if response_format:
             payload["response_format"] = response_format
+        if self._config.extra_body:
+            payload.update(self._config.extra_body)
 
         try:
             resp = await self._client.post("chat/completions", json=payload)

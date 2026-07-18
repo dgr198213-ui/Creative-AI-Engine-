@@ -55,7 +55,7 @@ class CombinedEvaluatorAgent(BaseAgent):
     """Evalúa utilidad, viabilidad y mercado en una sola llamada LLM."""
 
     def __init__(self, llm: LLMProvider) -> None:
-        super().__init__(name="combined", llm=llm, timeout_seconds=60.0)
+        super().__init__(name="combined", llm=llm, timeout_seconds=120.0)
 
     async def evaluate(
         self, idea: Idea, context: dict[str, Any] | None = None
