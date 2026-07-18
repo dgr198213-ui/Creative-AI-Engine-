@@ -333,6 +333,9 @@ class EvolutionRequest(BaseModel):
     """Solicitud para iniciar una evolución."""
 
     challenge: str = Field(..., min_length=10, max_length=5000)
+    # run_id pre-asignado por el caller (streaming): permite al cliente
+    # recuperar los resultados si pierde la conexión a mitad del run.
+    run_id: RunId | None = None
     domain: DomainName = DomainName.GENERIC
     population_size: int | None = Field(default=None, ge=4, le=500)
     generations: int | None = Field(default=None, ge=1, le=200)

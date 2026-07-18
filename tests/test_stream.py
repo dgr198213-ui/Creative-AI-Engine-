@@ -103,3 +103,35 @@ async def test_callback_receives_families_per_generation(sim_llm, deterministic_
     assert snapshots == [1, 2, 3]
     assert state.generation == 3
     assert len(state.archive) >= 2
+
+
+async def test_engine_respects_preassigned_run_id(sim_llm, deterministic_embed) -> None:
+    """El run_id pre-asignado (streaming) debe usarse tal cual: es la clave
+    con la que el cliente recupera resultados tras una desconexión."""
+    evaluator = EvaluatorOrchestrator(
+        agents={
+            "innovation": InnovationAgent(sim_llm),
+            "feasibility": FeasibilityAgent(sim_llm),
+            "market": MarketAgent(sim_llm),
+        }
+    )
+    engine = QDEngine(
+        generator=IdeaGeneratorAgent(sim_llm),
+        evaluator=evaluator,
+        mutation=MutationEngine(sim_llm),
+        crossover=CrossoverEngine(sim_llm),
+        encoder=IdeaEncoder(embed_fn=deterministic_embed),
+        repository=None,
+    )
+    request = EvolutionRequest(
+        challenge="Soluciones para movilidad urbana sostenible",
+        domain=DomainName.GENERIC,
+        population_size=4,
+        generations=1,
+        run_id="run_preasignado_test",
+    )
+    state = await engine.run_evolution(request)
+    assert state.run_id == "run_preasignado_test"
+    # Todas las ideas del run llevan ese run_id (así la recuperación las encuentra)
+    for cell in state.archive:
+        assert cell.elite.run_id == "run_preasignado_test"

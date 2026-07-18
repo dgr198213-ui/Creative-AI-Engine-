@@ -63,8 +63,19 @@ def _families_payload(cells: list) -> list[dict[str, Any]]:
 
 @router.post("/evolution/stream")
 async def stream_evolution(request_body: EvolutionRequest, request: Request) -> StreamingResponse:
-    """Lanza una evolución y transmite su progreso en vivo por SSE."""
+    """Lanza una evolución y transmite su progreso en vivo por SSE.
+
+    El run_id se pre-asigna y se envía en el evento `start`: si el cliente
+    pierde la conexión (móvil, red inestable), el run CONTINÚA en el
+    servidor y el cliente puede recuperar los resultados guardados vía
+    GET /runs/{run_id}/families.
+    """
+    import uuid
+
     from .evolution import _build_qd_engine
+
+    run_id = f"run_{uuid.uuid4().hex}"
+    request_body.run_id = run_id
 
     queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
 
@@ -84,7 +95,7 @@ async def stream_evolution(request_body: EvolutionRequest, request: Request) -> 
 
             domain_cfg = get_settings().get_domain(request_body.domain)
             total = request_body.generations or domain_cfg.default_generations
-            await queue.put(("start", {"total_generations": total}))
+            await queue.put(("start", {"total_generations": total, "run_id": run_id}))
             state = await engine.run_evolution(request_body)
             await queue.put(
                 (
@@ -108,11 +119,15 @@ async def stream_evolution(request_body: EvolutionRequest, request: Request) -> 
 
     async def event_generator() -> AsyncGenerator[str, None]:
         task = asyncio.create_task(run_and_signal())
+        disconnected = False
         try:
             yield _sse("open", {"status": "connected"})
             while True:
                 if await request.is_disconnected():
-                    logger.info("stream_client_disconnected")
+                    disconnected = True
+                    logger.info(
+                        "stream_client_disconnected_run_continues", run_id=run_id
+                    )
                     break
                 try:
                     kind, data = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -123,7 +138,9 @@ async def stream_evolution(request_body: EvolutionRequest, request: Request) -> 
                     break
                 yield _sse(kind, data)
         finally:
-            if not task.done():
+            # Si el cliente se desconectó, el run sigue en segundo plano:
+            # run_and_signal termina solo, persiste en BD y cierra el router.
+            if not disconnected and not task.done():
                 task.cancel()
 
     return StreamingResponse(

@@ -42,6 +42,7 @@ function start() {
   const challenge = challengeEl.value.trim();
   if (challenge.length < 10) return;
   state.running = true;
+  state.runId = null;
 
   $("ask").style.display = "none";
   $("live").classList.add("on");
@@ -87,7 +88,48 @@ async function stream(challenge, domain) {
       }
     }
   } catch (e) {
-    showError(e.message || "No se pudo conectar con el motor.");
+    if (state.runId) {
+      recover();
+    } else {
+      showError(e.message || "No se pudo conectar con el motor.");
+    }
+  }
+}
+
+// ---- Modo recuperación: la conexión cayó pero el run sigue en el servidor ----
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function recover() {
+  $("status").textContent = "Conexión perdida — recuperando…";
+  $("note").textContent =
+    "El motor sigue trabajando en el servidor. Mostrando los resultados guardados según llegan.";
+
+  let lastCount = -1;
+  let stable = 0;
+
+  for (let i = 0; i < 40 && state.runId; i++) {
+    await sleep(9000);
+    try {
+      const r = await fetch(`/api/v1/runs/${state.runId}/families`);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data.family_count > 0) {
+        $("skeleton").style.display = "none";
+        renderFamilies(data.families, true);
+        $("note").textContent = `${data.family_count} enfoque${data.family_count === 1 ? "" : "s"} recuperado${data.family_count === 1 ? "" : "s"} — el motor puede seguir añadiendo.`;
+        stable = data.family_count === lastCount ? stable + 1 : 0;
+        lastCount = data.family_count;
+        if (stable >= 2) break; // dos lecturas iguales seguidas: run terminado
+      }
+    } catch { /* red inestable: siguiente intento */ }
+  }
+
+  if (lastCount > 0) {
+    finish({ run_id: state.runId, families: new Array(lastCount) });
+    $("status").textContent = "Listo (recuperado)";
+    $("progress").style.width = "100%";
+  } else {
+    showError("Se perdió la conexión y no llegaron resultados guardados aún. Vuelve a intentarlo.");
   }
 }
 
@@ -107,6 +149,7 @@ function handleEvent(ev, total, setTotal) {
   switch (ev.event) {
     case "start":
       if (ev.data.total_generations) setTotal(ev.data.total_generations);
+      if (ev.data.run_id) state.runId = ev.data.run_id;
       $("status").textContent = "Explorando enfoques…";
       break;
 

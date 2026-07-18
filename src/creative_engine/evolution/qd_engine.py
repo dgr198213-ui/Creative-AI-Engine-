@@ -84,7 +84,11 @@ class QDEngine:
         if request.custom_weights:
             domain = domain.model_copy(update={"evaluation_weights": request.custom_weights})
 
+        state_kwargs: dict[str, Any] = {}
+        if request.run_id:
+            state_kwargs["run_id"] = request.run_id
         state = EvolutionState(
+            **state_kwargs,
             challenge=request.challenge,
             domain=request.domain,
             total_generations=request.generations or domain.default_generations,
