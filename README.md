@@ -205,6 +205,25 @@ src/creative_engine/
     └── static/    # panel web (index.html + app.js)
 ```
 
+## Técnicas de investigación integradas
+
+Del estado del arte en evolución generativa con LLMs (FunSearch/Nature 2024,
+TurboEvolve 2026, híbridos QD):
+
+- **Selección por curiosidad** (`select_curious`): los padres de mutación se
+  eligen combinando fitness con la inversa de la densidad local del archivo —
+  las élites en regiones poco exploradas se reproducen más, empujando la
+  cobertura hacia lo inexplorado (el `sample_underexplored` de los híbridos
+  TurboEvolve+MAP-Elites).
+- **Best-shot con repulsión** (estilo FunSearch invertido): la inyección de
+  ideas frescas muestra al generador los mejores enfoques existentes pidiendo
+  explícitamente alejarse de ellos. Diversidad dirigida sin llamadas extra.
+
+Candidatos evaluados y descartados por ahora: Evo-MCTS (multiplica
+evaluaciones — nuestro recurso escaso), islas de FunSearch (para poblaciones
+de miles), sampling verbalizado con K adaptativo de TurboEvolve (pendiente
+para cuando el ciclo base esté validado en producción).
+
 ## Roadmap post-MVP
 
 1. Búsqueda vectorial real con pgvector (el schema ya lo contempla)

@@ -183,6 +183,54 @@ class MAPElitesArchive:
         indices = rng.choice(len(occupied), size=size, p=probs, replace=False)
         return [occupied[int(i)].elite for i in indices]
 
+    def _local_density(self, cell_index: tuple[int, ...]) -> int:
+        """Nº de celdas OCUPADAS en el vecindario inmediato (Chebyshev r=1)."""
+        density = 0
+        for cell in self.occupied_cells:
+            other_index = cell.cell_index
+            if other_index == cell_index:
+                continue
+            if all(abs(a - b) <= 1 for a, b in zip(cell_index, other_index, strict=False)):
+                density += 1
+        return density
+
+    def select_curious(
+        self,
+        n: int,
+        rng: np.random.Generator | None = None,
+        fitness_weight: float = 0.5,
+    ) -> list[Idea]:
+        """Selección por curiosidad: prioriza regiones POCO exploradas.
+
+        Inspirado en el `sample_underexplored` de los híbridos
+        TurboEvolve + MAP-Elites: los padres se eligen combinando fitness
+        con la inversa de la densidad local — las élites en zonas
+        despobladas del espacio de comportamiento tienen más probabilidad
+        de reproducirse, empujando la cobertura hacia lo inexplorado.
+        """
+        occupied = self.occupied_cells
+        if not occupied:
+            raise PopulationEmptyError("No hay élites para mutar")
+
+        rng = rng or np.random.default_rng()
+
+        fitnesses = np.array([c.fitness for c in occupied])
+        f_norm = (fitnesses - fitnesses.min() + 1e-8)
+        f_norm = f_norm / f_norm.sum()
+
+        densities = np.array(
+            [self._local_density(c.cell_index) for c in occupied], dtype=np.float64
+        )
+        curiosity = 1.0 / (1.0 + densities)  # menos vecinos → más curiosidad
+        c_norm = curiosity / curiosity.sum()
+
+        probs = fitness_weight * f_norm + (1.0 - fitness_weight) * c_norm
+        probs = probs / probs.sum()
+
+        size = min(n, len(occupied))
+        indices = rng.choice(len(occupied), size=size, p=probs, replace=False)
+        return [occupied[int(i)].elite for i in indices]
+
     def select_pair_for_crossover(
         self,
         rng: np.random.Generator | None = None,

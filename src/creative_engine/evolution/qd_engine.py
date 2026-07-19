@@ -252,9 +252,9 @@ class QDEngine:
         n_crossovers = int(pop_size * cfg.crossover_rate)
         n_random = max(1, int(pop_size * cfg.random_injection_rate))
 
-        # ── Mutaciones ──
+        # ── Mutaciones (selección por curiosidad: regiones poco exploradas) ──
         if n_mutations > 0 and occupied > 0:
-            parents = archive.select_for_mutation(n_mutations, self._rng)
+            parents = archive.select_curious(n_mutations, self._rng)
             new_ideas.extend(await self._mutation.batch_mutate(parents))
 
         # ── Cruces ──
@@ -267,13 +267,28 @@ class QDEngine:
             if pairs:
                 new_ideas.extend(await self._crossover.batch_crossover(pairs))
 
-        # ── Inyección de ideas frescas (diversidad) ──
+        # ── Inyección de ideas frescas con repulsión (best-shot invertido) ──
+        # Estilo FunSearch: mostrar al generador lo mejor que ya existe,
+        # pero pidiendo explícitamente alejarse de ello → diversidad real
+        # sin ninguna llamada LLM adicional.
         if n_random > 0:
+            top_cells = sorted(
+                archive.occupied_cells, key=lambda c: c.fitness, reverse=True
+            )[:3]
+            if top_cells:
+                existing = "; ".join(f"«{c.elite.title}»" for c in top_cells)
+                hint = (
+                    f"Ya existen estos enfoques: {existing}. "
+                    "Genera ideas RADICALMENTE distintas a esas: otro ángulo, "
+                    "otro mecanismo, otro público."
+                )
+            else:
+                hint = "Explora un ángulo completamente diferente e inesperado."
             random_ideas = await self._generator.generate_population(
                 challenge=context["challenge"],
                 domain=domain,
                 count=n_random,
-                variation_hint="Explora un ángulo completamente diferente e inesperado.",
+                variation_hint=hint,
             )
             new_ideas.extend(random_ideas)
 

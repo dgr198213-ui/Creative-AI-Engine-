@@ -146,3 +146,68 @@ class TestMAPElitesArchive:
         assert g.shape == (1, 3)
         assert d.shape == (1, 2)
         assert f[0] == pytest.approx(idea.fitness)
+
+
+class TestCuriositySelection:
+    """Selección por curiosidad: prioriza regiones poco exploradas."""
+
+    def _archive_with_cluster_and_outlier(self):
+        """Archivo con un grupo denso y una élite aislada."""
+        from creative_engine.core.models import EvaluationScores, Idea
+
+        def _make(title: str, descriptor: list[float]) -> Idea:
+            idea = Idea(title=title, description=f"Descripción de {title} con detalle.")
+            idea.behavior_descriptor = descriptor
+            idea.genome_vector = [1.0, 0.0]
+            idea.evaluation = EvaluationScores(
+                utility=0.5, feasibility=0.5, market_fit=0.5
+            )
+            return idea
+
+        archive = MAPElitesArchive(grid_shape=(10, 10, 8))
+        # clúster denso: 4 élites en celdas adyacentes
+        cluster = [
+            [0.05, 0.05, 0.05],
+            [0.15, 0.05, 0.05],
+            [0.05, 0.15, 0.05],
+            [0.15, 0.15, 0.05],
+        ]
+        for i, d in enumerate(cluster):
+            archive.try_insert(_make(f"Idea clúster {i}", d))
+        # élite aislada en la esquina opuesta
+        archive.try_insert(_make("Idea aislada", [0.95, 0.95, 0.95]))
+        return archive
+
+    def test_curious_prefers_isolated_elites(self) -> None:
+        """Con fitness igual, la élite aislada debe seleccionarse mucho más
+        a menudo que su cuota uniforme (1/5)."""
+        import numpy as np
+
+        archive = self._archive_with_cluster_and_outlier()
+        rng = np.random.default_rng(42)
+        picks = 0
+        trials = 400
+        for _ in range(trials):
+            selected = archive.select_curious(1, rng, fitness_weight=0.0)
+            if selected[0].title == "Idea aislada":
+                picks += 1
+        # cuota uniforme sería ~20%; con curiosidad pura debe superar 30%
+        assert picks / trials > 0.30, f"aislada elegida solo {picks}/{trials}"
+
+    def test_curious_respects_fitness_weight(self) -> None:
+        """Con fitness_weight=1.0 se comporta como selección por fitness."""
+        import numpy as np
+
+        archive = self._archive_with_cluster_and_outlier()
+        rng = np.random.default_rng(7)
+        selected = archive.select_curious(3, rng, fitness_weight=1.0)
+        assert len(selected) == 3
+
+    def test_curious_empty_archive_raises(self) -> None:
+        import pytest
+
+        from creative_engine.core.exceptions import PopulationEmptyError
+
+        archive = MAPElitesArchive(grid_shape=(10, 10, 8))
+        with pytest.raises(PopulationEmptyError):
+            archive.select_curious(1)
