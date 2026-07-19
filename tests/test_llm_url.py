@@ -156,3 +156,68 @@ async def test_extra_body_merged_into_payload() -> None:
         assert captured.get("thinking") == {"type": "disabled"}
     finally:
         await provider.close()
+
+
+async def test_glm_thinking_disabled_by_default() -> None:
+    """Modelos GLM: el modo razonador se desactiva solo (timeouts en free tier)."""
+    from unittest.mock import patch
+
+    from creative_engine.llm.provider import LLMProvider
+
+    provider = LLMProvider(
+        LLMProviderConfig(name="zai", api_key=SecretStr("k"), model="glm-4.5-flash")
+    )
+    captured: dict = {}
+
+    class FakeResp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+
+    async def fake_post(url, json=None):
+        captured.update(json or {})
+        return FakeResp()
+
+    try:
+        with patch.object(provider._client, "post", side_effect=fake_post):
+            await provider._call_api.__wrapped__(provider, "hola")
+        assert captured.get("thinking") == {"type": "disabled"}
+    finally:
+        await provider.close()
+
+
+async def test_glm_thinking_respects_explicit_config() -> None:
+    """Si el usuario configura thinking explícitamente, se respeta."""
+    from unittest.mock import patch
+
+    from creative_engine.llm.provider import LLMProvider
+
+    provider = LLMProvider(
+        LLMProviderConfig(
+            name="zai",
+            api_key=SecretStr("k"),
+            model="glm-4.7-flash",
+            extra_body={"thinking": {"type": "enabled"}},
+        )
+    )
+    captured: dict = {}
+
+    class FakeResp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+
+    async def fake_post(url, json=None):
+        captured.update(json or {})
+        return FakeResp()
+
+    try:
+        with patch.object(provider._client, "post", side_effect=fake_post):
+            await provider._call_api.__wrapped__(provider, "hola")
+        assert captured.get("thinking") == {"type": "enabled"}
+    finally:
+        await provider.close()

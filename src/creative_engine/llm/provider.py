@@ -143,6 +143,16 @@ class LLMProvider:
         if self._config.extra_body:
             payload.update(self._config.extra_body)
 
+        # Los GLM de Z.ai activan razonamiento por defecto: >120s por
+        # respuesta en free tier → timeouts sistemáticos en evaluación.
+        # Para nuestras tareas (JSON corto) el thinking no aporta nada,
+        # así que lo desactivamos salvo que el usuario lo pida explícito.
+        if (
+            self._config.model.lower().startswith("glm")
+            and "thinking" not in payload
+        ):
+            payload["thinking"] = {"type": "disabled"}
+
         try:
             resp = await self._client.post("chat/completions", json=payload)
         except httpx.ConnectError:
