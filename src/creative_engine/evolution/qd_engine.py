@@ -78,6 +78,21 @@ class QDEngine:
         self._rng = np.random.default_rng()
         self._log = logger.bind(component="QDEngine")
 
+        # Puerta de sorpresa (TurboEvolve-style): evita gastar evaluaciones
+        # LLM en ideas semánticamente redundantes. Configurable por env.
+        evo = self._settings.evolution
+        if evo.surprise_gate_enabled:
+            from .surprise import SurpriseGate
+
+            self._surprise_gate: SurpriseGate | None = SurpriseGate(
+                threshold=evo.surprise_threshold,
+                min_threshold=evo.surprise_threshold_min,
+                max_threshold=evo.surprise_threshold_max,
+                step=evo.surprise_threshold_step,
+            )
+        else:
+            self._surprise_gate = None
+
     async def run_evolution(self, request: EvolutionRequest) -> EvolutionState:
         """Ejecuta el ciclo evolutivo completo y devuelve el estado final."""
         domain = self._settings.get_domain(request.domain)
@@ -147,6 +162,8 @@ class QDEngine:
                 gen_start = time.perf_counter()
                 state.generation = gen
 
+                cells_before = len(archive.occupied_cells)
+
                 new_ideas = await self._create_generation(
                     archive=archive,
                     domain=domain,
@@ -154,6 +171,13 @@ class QDEngine:
                     pop_size=state.population_size,
                 )
                 await self._process_batch(new_ideas, archive, domain, context, state)
+
+                # Adaptación del umbral de sorpresa según el progreso:
+                # estancamiento (sin celdas nuevas) → abrir la puerta;
+                # progreso → cerrarla un poco y ahorrar presupuesto.
+                if self._surprise_gate is not None:
+                    stagnated = len(archive.occupied_cells) <= cells_before
+                    self._surprise_gate.adapt(stagnated=stagnated)
 
                 gen_time = time.perf_counter() - gen_start
 
@@ -305,11 +329,51 @@ class QDEngine:
         context: dict[str, Any],
         state: EvolutionState,
     ) -> None:
-        """Evalúa, codifica, calcula novedad objetiva e inserta un lote."""
+        """Codifica, filtra por sorpresa, evalúa e inserta un lote.
+
+        Orden clave: la codificación (embeddings) es local y gratis; la
+        evaluación LLM es el recurso caro. Codificamos primero y solo
+        evaluamos las ideas que aportan sorpresa semántica frente a las
+        élites ya existentes (puerta adaptativa, estilo TurboEvolve).
+        """
         if not ideas:
             return
 
-        # 1. Evaluación de calidad con concurrencia LIMITADA.
+        # 0. Codificar primero (local, sin coste LLM)
+        encoded: list[Idea] = []
+        for idea in ideas:
+            try:
+                self._encoder.encode_idea(idea, domain)
+                encoded.append(idea)
+            except Exception as e:
+                self._log.warning("idea_encoding_failed", idea_id=idea.id, error=str(e))
+                idea.status = IdeaStatus.DISCARDED
+
+        # 1. Puerta de sorpresa: descartar sin evaluar lo ya explorado
+        to_evaluate: list[Idea] = []
+        if self._surprise_gate is not None:
+            elite_genomes = archive.elite_genomes()
+            skipped = 0
+            for idea in encoded:
+                if self._surprise_gate.is_surprising(idea.genome_vector, elite_genomes):
+                    to_evaluate.append(idea)
+                else:
+                    idea.status = IdeaStatus.DISCARDED
+                    skipped += 1
+            if skipped:
+                self._log.info(
+                    "surprise_gate_skipped",
+                    skipped=skipped,
+                    threshold=round(self._surprise_gate.threshold, 3),
+                    total_saved=self._surprise_gate.evaluations_saved,
+                )
+        else:
+            to_evaluate = encoded
+
+        if not to_evaluate:
+            return
+
+        # 2. Evaluación de calidad con concurrencia LIMITADA.
         # Evaluar todas las ideas a la vez satura los rate limits de los
         # proveedores (cada idea = 3 llamadas de agente), provocando timeouts
         # en cascada. Limitamos cuántas ideas se evalúan simultáneamente.
@@ -321,15 +385,15 @@ class QDEngine:
                 await self._evaluator.evaluate_idea(idea, context)
 
         await asyncio.gather(
-            *(_eval_one(idea) for idea in ideas),
+            *(_eval_one(idea) for idea in to_evaluate),
             return_exceptions=True,
         )
 
-        # 2. Codificar + novedad objetiva + insertar
+        # 3. Novedad objetiva + insertar
         inserted_count = 0
         k = self._settings.evolution.novelty_k_nearest
 
-        for idea in ideas:
+        for idea in to_evaluate:
             if idea.evaluation is None:
                 idea.status = IdeaStatus.DISCARDED
                 continue
@@ -337,8 +401,6 @@ class QDEngine:
             state.all_ideas.append(idea.id)
 
             try:
-                self._encoder.encode_idea(idea, domain)
-
                 # Novedad objetiva: distancia al archivo ANTES de insertarla
                 idea.evaluation.novelty = objective_novelty(
                     idea.genome_vector, archive.elite_genomes(), k=k
@@ -360,6 +422,6 @@ class QDEngine:
         self._log.debug(
             "batch_processed",
             total=len(ideas),
+            evaluated=len(to_evaluate),
             inserted=inserted_count,
-            discarded=len(ideas) - inserted_count,
         )

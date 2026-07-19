@@ -219,6 +219,14 @@ TurboEvolve 2026, híbridos QD):
   ideas frescas muestra al generador los mejores enfoques existentes pidiendo
   explícitamente alejarse de ellos. Diversidad dirigida sin llamadas extra.
 
+- **Puerta de sorpresa adaptativa** (`SurpriseGate`, del K-adaptativo de
+  TurboEvolve — y curiosamente lo que el propio motor propuso como mejora):
+  antes de gastar una evaluación LLM en una idea nueva, se mide su distancia
+  semántica (embedding, local y gratis) a las élites existentes. Las ideas
+  redundantes se descartan SIN evaluar. El umbral se adapta solo: baja ante
+  estancamiento (explorar más), sube ante progreso (ahorrar presupuesto).
+  Configurable vía `CREATIVE_EVOLUTION__SURPRISE_*`.
+
 Candidatos evaluados y descartados por ahora: Evo-MCTS (multiplica
 evaluaciones — nuestro recurso escaso), islas de FunSearch (para poblaciones
 de miles), sampling verbalizado con K adaptativo de TurboEvolve (pendiente

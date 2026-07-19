@@ -48,6 +48,13 @@ class EvolutionConfig(BaseModel):
     """Configuración global del motor evolutivo."""
 
     max_concurrent_evaluations: int = Field(default=3, ge=1, le=100)
+    # Puerta de sorpresa: solo se evalúan con LLM las ideas suficientemente
+    # lejanas (distancia coseno) a las élites existentes. Umbral adaptativo.
+    surprise_gate_enabled: bool = True
+    surprise_threshold: float = Field(default=0.10, ge=0.0, le=1.0)
+    surprise_threshold_min: float = Field(default=0.02, ge=0.0, le=1.0)
+    surprise_threshold_max: float = Field(default=0.20, ge=0.0, le=1.0)
+    surprise_threshold_step: float = Field(default=0.02, ge=0.0, le=0.2)
     mutation_rate: float = Field(default=0.4, ge=0.0, le=1.0)
     crossover_rate: float = Field(default=0.25, ge=0.0, le=1.0)
     random_injection_rate: float = Field(default=0.1, ge=0.0, le=0.5)
