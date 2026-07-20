@@ -39,7 +39,7 @@ Abanico final de ideas élite diversas
 | **Descriptor de comportamiento desde el embedding** (proyección determinista 384→3 dims) | Si el grid se construye con puntuaciones, dos ideas semánticamente opuestas compiten por la misma celda. Con embeddings, la diversidad del archivo es diversidad de contenido real. |
 | **Fitness = calidad pura** (utilidad, viabilidad, mercado, impacto) | MAP-Elites ya garantiza la diversidad; mezclar novedad en el fitness la contaría dos veces. |
 | **Mutación/cruce guiados por LLM** | Operadores semánticos coherentes en lugar de aleatorios (enfoque "Evolutionary Thoughts", arXiv:2505.05756). |
-| **Defaults económicos** (población 20 × 10 generaciones) | Cada idea ≈ 4 llamadas LLM. Los defaults mantienen un run en cientos de llamadas, no decenas de miles. |
+| **Defaults económicos** (población 8 × 3 generaciones + evaluador combinado + puerta de sorpresa) | Un run cabe en ~40 llamadas LLM, viable en free tier. |
 
 ## Configuración recomendada (free tier estable)
 
@@ -118,6 +118,10 @@ creative-engine evolve \
 # 5. O servidor API + panel web
 creative-engine serve       # → http://localhost:8000  (panel)
                             # → http://localhost:8000/docs  (API)
+
+# Utilidades
+creative-engine doctor      # diagnostica claves, enrutado y BD
+creative-engine benchmark --challenge "..." --with-quality   # motor vs prompt único
 ```
 
 ## Panel web
@@ -187,7 +191,7 @@ proveedor hace failover al siguiente en vez de matar el run.
 ## Tests
 
 ```bash
-PYTHONPATH=src python -m pytest tests/ -v   # 48 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -v   # 129 tests, sin red ni BD
 ```
 
 La suite incluye un test de integración del ciclo evolutivo completo con LLM simulado y embeddings deterministas.
@@ -232,10 +236,15 @@ evaluaciones — nuestro recurso escaso), islas de FunSearch (para poblaciones
 de miles), sampling verbalizado con K adaptativo de TurboEvolve (pendiente
 para cuando el ciclo base esté validado en producción).
 
+## Estado
+
+Desplegado en Railway (Gemini + Z.ai GLM con failover), produciendo runs
+completos de punta a punta con informe exportable. 129 tests, sin red ni BD.
+
 ## Roadmap post-MVP
 
 1. Búsqueda vectorial real con pgvector (el schema ya lo contempla)
-2. Persistencia del progreso del stream para reconexión (reload sin perder el run)
+2. Sampling verbalizado con K adaptativo de TurboEvolve en el generador
 3. Coevolución adversaria (Generational Adversarial MAP-Elites, arXiv:2505.06617)
 4. Learned QD para meta-aprendizaje de reglas de exploración (arXiv:2502.02190)
 
