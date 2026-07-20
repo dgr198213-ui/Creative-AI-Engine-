@@ -166,3 +166,49 @@ async def test_export_run_markdown() -> None:
         # run inexistente → 404
         r = await client.get("/api/v1/runs/run_nope/export")
         assert r.status_code == 404
+
+
+async def test_recovery_families_include_id_and_advantages() -> None:
+    """El endpoint de recuperación debe traer id y advantages del representante
+    (si faltan, el panel manda 'undefined' al generar informe → 404)."""
+    from httpx import ASGITransport, AsyncClient
+
+    from creative_engine.core.models import EvaluationScores, Idea, IdeaStatus
+
+    s = Settings.load()
+    s.llm = {"default": LLMProviderConfig(name="sim", api_key=config.SecretStr("x"))}
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+    repo = _NullRepo()
+    app.state.repository = app.state.repository = repo
+
+    elites = []
+    for i, desc in enumerate([[0.1, 0.1, 0.1], [0.9, 0.9, 0.9]]):
+        idea = Idea(
+            title=f"Idea {i}",
+            description=f"Descripción larga de la idea élite {i} del run.",
+            advantages=["Ventaja clara", "Otra ventaja"],
+            status=IdeaStatus.ELITE,
+            run_id="run_rec",
+        )
+        idea.evaluation = EvaluationScores(utility=0.7, feasibility=0.6, market_fit=0.5)
+        idea.behavior_descriptor = desc
+        elites.append(idea)
+
+    async def fake_get_elites(run_id, limit=50):
+        return elites if run_id == "run_rec" else []
+
+    repo.get_elites_by_run = fake_get_elites
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/v1/runs/run_rec/families")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["family_count"] >= 1
+        for fam in data["families"]:
+            rep = fam["representative"]
+            assert rep["id"], "el representante debe tener id (si no, informe → undefined)"
+            assert "advantages" in rep, "el representante debe incluir advantages"

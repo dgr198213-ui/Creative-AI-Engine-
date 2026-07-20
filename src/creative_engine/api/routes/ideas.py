@@ -104,6 +104,7 @@ async def get_run_families(
                         else None
                     ),
                     "description": fam.representative.description[:300],
+                    "advantages": fam.representative.advantages[:3],
                 },
                 "report": fam.report,
                 "members": [

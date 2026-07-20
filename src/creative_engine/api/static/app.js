@@ -218,7 +218,7 @@ function renderFamilies(families, final, runId) {
             ${novelty != null ? `<span>Originalidad <span class="meta-val">${novelty}%</span></span>` : ""}
           </div>
           ${variantsBlock}
-          ${final ? `<button class="report-btn" data-id="${rep.id}">Generar informe</button><div class="report-out"></div>` : ""}
+          ${final && rep.id ? `<button class="report-btn" data-id="${rep.id}">Generar informe</button><div class="report-out"></div>` : ""}
         </div>
       </div>`;
     host.appendChild(el);
@@ -231,11 +231,17 @@ function renderFamilies(families, final, runId) {
 function wireReportButtons() {
   document.querySelectorAll(".report-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      if (!id || id === "undefined") {
+        btn.textContent = "Informe no disponible";
+        btn.disabled = true;
+        return;
+      }
       const out = btn.nextElementSibling;
       btn.disabled = true;
       btn.textContent = "Redactando…";
       try {
-        const r = await fetch(`/api/v1/ideas/${btn.dataset.id}/report`, { method: "POST" });
+        const r = await fetch(`/api/v1/ideas/${id}/report`, { method: "POST" });
         if (!r.ok) throw new Error();
         const data = await r.json();
         out.textContent = data.report || "Sin contenido.";
