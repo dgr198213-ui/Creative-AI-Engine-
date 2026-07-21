@@ -21,11 +21,12 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from ...core.models import EvolutionRequest
 from ...evolution.clustering import group_into_families
+from ..guardrails import enforce_evolution_rate_limit, enforce_request_budget
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -61,7 +62,9 @@ def _families_payload(cells: list) -> list[dict[str, Any]]:
     ]
 
 
-@router.post("/evolution/stream")
+@router.post(
+    "/evolution/stream", dependencies=[Depends(enforce_evolution_rate_limit)]
+)
 async def stream_evolution(request_body: EvolutionRequest, request: Request) -> StreamingResponse:
     """Lanza una evolución y transmite su progreso en vivo por SSE.
 
@@ -71,6 +74,8 @@ async def stream_evolution(request_body: EvolutionRequest, request: Request) -> 
     GET /runs/{run_id}/families.
     """
     import uuid
+
+    enforce_request_budget(request_body)
 
     from .evolution import _build_qd_engine
 

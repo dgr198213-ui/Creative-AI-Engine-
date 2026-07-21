@@ -119,6 +119,114 @@ async def test_history_endpoint_503_without_repo() -> None:
         assert (await client.get("/health")).json()["status"] == "ok"
 
 
+async def test_budget_cap_rejects_oversized_request() -> None:
+    """Auditoría C2: population_size x generations no puede desbordar el
+    tope configurado, ni siquiera con un EvolutionRequest "legítimo"."""
+    from httpx import ASGITransport, AsyncClient
+
+    s = Settings.load()
+    s.llm = {"default": LLMProviderConfig(name="sim", api_key=config.SecretStr("x"))}
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+
+    payload = {
+        "challenge": "Reto de prueba con longitud suficiente para pasar la validación",
+        "population_size": 500,
+        "generations": 200,
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/api/v1/evolution/start", json=payload)
+
+    assert r.status_code == 422
+    assert "presupuesto" in r.json()["detail"].lower()
+
+
+async def test_budget_cap_allows_request_within_limit() -> None:
+    """Un request dentro del tope no debe chocar con el guardrail: debe
+    llegar hasta el intento de construir el motor (503 sin LLM real
+    configurado), no quedarse en el 422 del presupuesto."""
+    from httpx import ASGITransport, AsyncClient
+
+    s = Settings.load()
+    s.llm = {}  # sin proveedores: si pasa el guardrail, falla con 503, no red
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+
+    payload = {
+        "challenge": "Reto de prueba con longitud suficiente para pasar la validación",
+        "population_size": 8,
+        "generations": 3,
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/api/v1/evolution/start", json=payload)
+
+    assert r.status_code == 503
+
+
+async def test_rate_limit_blocks_after_threshold() -> None:
+    """Auditoría C2: /evolution/* debe limitar peticiones por IP.
+
+    Sin LLM real configurado los requests que pasen el rate limit fallan
+    rápido con 503 (motor no construible); lo que importa aquí es que,
+    tras agotar el límite, la petición ni siquiera llega a intentarlo.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    s = Settings.load()
+    s.llm = {}  # sin proveedores: los que pasen el rate limit devuelven 503
+    s.evolution.rate_limit_per_minute = 2
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+
+    payload = {"challenge": "Reto de prueba con longitud suficiente para validar"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r1 = await client.post("/api/v1/evolution/start", json=payload)
+        r2 = await client.post("/api/v1/evolution/start", json=payload)
+        r3 = await client.post("/api/v1/evolution/start", json=payload)
+
+    assert r1.status_code == 503
+    assert r2.status_code == 503
+    assert r3.status_code == 429
+    assert "límite" in r3.json()["detail"].lower()
+
+
+async def test_rate_limit_is_per_app_not_global() -> None:
+    """Cada app (cada test) tiene su propio limiter: no hay estado global
+    compartido que contamine tests entre sí."""
+    from httpx import ASGITransport, AsyncClient
+
+    s = Settings.load()
+    s.llm = {}
+    s.evolution.rate_limit_per_minute = 1
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app_a = create_app()
+    app_b = create_app()
+    payload = {"challenge": "Reto de prueba con longitud suficiente para validar"}
+
+    async with AsyncClient(transport=ASGITransport(app=app_a), base_url="http://test") as client:
+        ra = await client.post("/api/v1/evolution/start", json=payload)
+    async with AsyncClient(transport=ASGITransport(app=app_b), base_url="http://test") as client:
+        rb = await client.post("/api/v1/evolution/start", json=payload)
+
+    assert ra.status_code == 503  # consumió su único hueco, sin 429
+    assert rb.status_code == 503  # app distinta: limiter fresco, tampoco 429
+
+
 async def test_export_run_markdown() -> None:
     """El export del run devuelve un informe Markdown con las familias."""
     from httpx import ASGITransport, AsyncClient

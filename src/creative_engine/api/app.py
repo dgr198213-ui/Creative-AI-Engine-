@@ -77,6 +77,10 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
+    from .guardrails import InMemoryRateLimiter
+
+    app.state.rate_limiter = InMemoryRateLimiter()
+
     # CORS: abierto en desarrollo; restringir orígenes antes de exponer públicamente.
     app.add_middleware(
         CORSMiddleware,

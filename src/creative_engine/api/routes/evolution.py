@@ -6,10 +6,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...core.models import DomainName, EvolutionRequest, EvolutionResponse
 from ..deps import require_repo
+from ..guardrails import enforce_evolution_rate_limit, enforce_request_budget
 
 if TYPE_CHECKING:
     from ...evolution.qd_engine import QDEngine
@@ -66,13 +67,14 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
     return engine
 
 
-@router.post("/evolution/start")
+@router.post("/evolution/start", dependencies=[Depends(enforce_evolution_rate_limit)])
 async def start_evolution(request_body: EvolutionRequest, request: Request) -> dict:
     """Ejecuta una evolución completa y devuelve el resumen.
 
     Nota MVP: la ejecución es síncrona dentro de la petición. Para retos
     grandes usar el CLI o reducir población/generaciones.
     """
+    enforce_request_budget(request_body)
     engine = await _build_qd_engine(request)
     try:
         state = await engine.run_evolution(request_body)
