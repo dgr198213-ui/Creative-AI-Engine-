@@ -7,14 +7,16 @@ Relaciones semánticas soportadas:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from ..core.config import get_settings
 from ..core.exceptions import GraphQueryError
 from ..core.models import Idea
+
+if TYPE_CHECKING:
+    from neo4j import AsyncDriver
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +38,11 @@ class IdeaKnowledgeGraph:
         self._log = logger.bind(component="KnowledgeGraph")
 
     async def connect(self) -> None:
+        # Import perezoso: `neo4j` es una dependencia opcional (extra
+        # "graph"). Nada en el flujo activo del motor la necesita: solo
+        # se paga el import si alguien conecta este grafo de verdad.
+        from neo4j import AsyncGraphDatabase
+
         self._driver = AsyncGraphDatabase.driver(self._uri, auth=(self._user, self._password))
         await self._driver.verify_connectivity()
         self._log.info("graph_connected", uri=self._uri)

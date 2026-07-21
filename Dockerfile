@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# ── Build stage: aquí vive build-essential, no en la imagen final ──
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -9,10 +10,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # hatchling necesita src/ presente en el build
 COPY pyproject.toml README.md ./
 COPY src/ src/
-COPY configs/ configs/
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
+    pip install --no-cache-dir --prefix=/install .
+
+# ── Runtime stage: sin build-essential (auditoría M1: ~250 MB menos,
+# menor superficie de ataque en la imagen que corre en producción) ──
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+COPY configs/ configs/
 
 # Precargar el modelo de embeddings en la imagen: elimina la descarga de
 # HuggingFace en el primer run (latencia + dependencia de red en runtime).

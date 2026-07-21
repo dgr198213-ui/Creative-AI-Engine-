@@ -27,6 +27,9 @@ class _NullRepo:
     async def get_run_status(self, run_id: str) -> dict | None:
         return None
 
+    async def get_stats(self, run_id: str | None = None) -> dict:
+        return {"total": len(self._store), "elites": 0, "discarded": 0}
+
     async def initialize(self) -> None: ...
     async def close(self) -> None: ...
 
@@ -227,6 +230,137 @@ async def test_rate_limit_is_per_app_not_global() -> None:
     assert rb.status_code == 503  # app distinta: limiter fresco, tampoco 429
 
 
+class TestApiKeyAuth:
+    """Auditoría C1: sin CREATIVE_API_KEY la API queda abierta (como hoy);
+    al configurarla, /api/v1/* exige X-API-Key salvo rutas públicas."""
+
+    async def test_open_by_default_without_api_key(self) -> None:
+        s = Settings.load()
+        s.llm = {}
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/stats")
+            assert r.status_code != 401
+
+    async def test_blocks_without_key_when_configured(self) -> None:
+        s = Settings.load()
+        s.llm = {}
+        s.api_key = "secreta-123"
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+        app.state.repository = _NullRepo()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/stats")
+            assert r.status_code == 401
+
+    async def test_allows_with_correct_header(self) -> None:
+        s = Settings.load()
+        s.llm = {}
+        s.api_key = "secreta-123"
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+        app.state.repository = _NullRepo()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get(
+                "/api/v1/stats", headers={"X-API-Key": "secreta-123"}
+            )
+            assert r.status_code != 401
+
+    async def test_wrong_key_rejected(self) -> None:
+        s = Settings.load()
+        s.llm = {}
+        s.api_key = "secreta-123"
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+        app.state.repository = _NullRepo()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/stats", headers={"X-API-Key": "otra-cosa"})
+            assert r.status_code == 401
+
+    async def test_allows_with_query_param_for_download_links(self) -> None:
+        """El enlace <a href> de descarga del export no puede llevar cabeceras;
+        debe poder autenticarse con ?api_key= en su lugar."""
+        s = Settings.load()
+        s.llm = {}
+        s.api_key = "secreta-123"
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+        app.state.repository = _NullRepo()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/v1/stats?api_key=secreta-123")
+            assert r.status_code != 401
+
+    async def test_health_and_panel_stay_public(self) -> None:
+        s = Settings.load()
+        s.llm = {}
+        s.api_key = "secreta-123"
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+        app.state.repository = _NullRepo()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.get("/health")).status_code == 200
+            assert (await client.get("/")).status_code == 200
+            assert (await client.get("/static/app.js")).status_code == 200
+
+
+class TestDocsHiddenInProduction:
+    """Auditoría A2: /docs, /redoc y /openapi.json solo con debug=True."""
+
+    async def test_docs_hidden_when_not_debug(self) -> None:
+        s = Settings.load()
+        s.debug = False
+        s.llm = {}
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.get("/docs")).status_code == 404
+            assert (await client.get("/redoc")).status_code == 404
+            assert (await client.get("/openapi.json")).status_code == 404
+
+    async def test_docs_available_when_debug(self) -> None:
+        s = Settings.load()
+        s.debug = True
+        s.llm = {}
+        config._settings = s
+
+        from creative_engine.api.app import create_app
+
+        app = create_app()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.get("/docs")).status_code == 200
+            assert (await client.get("/openapi.json")).status_code == 200
+
+
 async def test_export_run_markdown() -> None:
     """El export del run devuelve un informe Markdown con las familias."""
     from httpx import ASGITransport, AsyncClient
@@ -277,6 +411,49 @@ async def test_export_run_markdown() -> None:
         # run inexistente → 404
         r = await client.get("/api/v1/runs/run_nope/export")
         assert r.status_code == 404
+
+
+async def test_export_run_failed_returns_status_not_404() -> None:
+    """M4 de la auditoría: un run que falló (0 élites, cadena de proveedores
+    agotada) debe exportar el estado failed, no un 404 indistinguible de
+    'este run no existe'."""
+    from httpx import ASGITransport, AsyncClient
+
+    s = Settings.load()
+    s.llm = {"default": LLMProviderConfig(name="sim", api_key=config.SecretStr("x"))}
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+    repo = _NullRepo()
+    app.state.repository = repo
+
+    async def fake_get_elites(run_id, limit=50):
+        return []  # el run falló: nunca se generó ni una idea
+
+    async def fake_get_run_status(run_id):
+        if run_id == "run_failed":
+            return {
+                "run_id": "run_failed",
+                "status": "failed",
+                "error": "La cadena de proveedores LLM se agotó por completo.",
+            }
+        return None
+
+    repo.get_elites_by_run = fake_get_elites
+    repo.get_run_status = fake_get_run_status
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/v1/runs/run_failed/export")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "failed"
+        assert "agotó" in data["error"]
+
+        # sin estado persistido y sin élites → sigue siendo 404 (run inexistente)
+        r_missing = await client.get("/api/v1/runs/run_missing/export")
+        assert r_missing.status_code == 404
 
 
 async def test_recovery_families_include_id_and_advantages() -> None:

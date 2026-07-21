@@ -6,6 +6,46 @@ const $ = (id) => document.getElementById(id);
 
 const state = { domain: "generic", running: false };
 
+// ---- API key opcional (auditoría C1) ----
+// Sin CREATIVE_API_KEY configurada en el servidor, esto no hace nada: las
+// peticiones pasan igual. Si el servidor la exige, la primera petición que
+// falle con 401 pide la clave una vez y la recuerda en este navegador.
+const API_KEY_STORAGE = "creative_api_key";
+
+function getApiKey() {
+  return localStorage.getItem(API_KEY_STORAGE) || "";
+}
+
+function setApiKey(key) {
+  if (key) localStorage.setItem(API_KEY_STORAGE, key);
+}
+
+async function apiFetch(url, opts = {}) {
+  const withKey = (key) => ({
+    ...opts,
+    headers: { ...(opts.headers || {}), ...(key ? { "X-API-Key": key } : {}) },
+  });
+
+  let resp = await fetch(url, withKey(getApiKey()));
+  if (resp.status === 401) {
+    const key = window.prompt("Este panel requiere una clave de acceso (API key):");
+    if (key) {
+      setApiKey(key);
+      resp = await fetch(url, withKey(key));
+    }
+  }
+  return resp;
+}
+
+// Query param equivalente, para enlaces <a href> que el navegador sigue
+// como GET simple (no admite cabeceras custom): p.ej. la descarga del export.
+function withApiKeyParam(url) {
+  const key = getApiKey();
+  if (!key) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}api_key=${encodeURIComponent(key)}`;
+}
+
 // ---- Estado 1: selección de ámbito y validación ----
 const challengeEl = $("challenge");
 const goBtn = $("go");
@@ -63,7 +103,7 @@ function start() {
 async function stream(challenge, domain) {
   let total = 10;
   try {
-    const resp = await fetch("/api/v1/evolution/stream", {
+    const resp = await apiFetch("/api/v1/evolution/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ challenge, domain }),
@@ -110,7 +150,7 @@ async function recover() {
   for (let i = 0; i < 40 && state.runId; i++) {
     await sleep(9000);
     try {
-      const r = await fetch(`/api/v1/runs/${state.runId}/families`);
+      const r = await apiFetch(`/api/v1/runs/${state.runId}/families`);
       if (!r.ok) continue;
       const data = await r.json();
       if (data.family_count > 0) {
@@ -241,7 +281,7 @@ function wireReportButtons() {
       btn.disabled = true;
       btn.textContent = "Redactando…";
       try {
-        const r = await fetch(`/api/v1/ideas/${id}/report`, { method: "POST" });
+        const r = await apiFetch(`/api/v1/ideas/${id}/report`, { method: "POST" });
         if (!r.ok) throw new Error();
         const data = await r.json();
         out.textContent = data.report || "Sin contenido.";
@@ -262,7 +302,7 @@ function finish(data) {
   $("actions").classList.add("on");
   if (data.run_id) {
     const dl = $("download");
-    dl.href = `/api/v1/runs/${data.run_id}/export`;
+    dl.href = withApiKeyParam(`/api/v1/runs/${data.run_id}/export`);
     dl.hidden = false;
   }
   $("summary").textContent = `${data.total_ideas || 0} ideas exploradas · ${n} enfoque${n === 1 ? "" : "s"} destacado${n === 1 ? "" : "s"}.`;

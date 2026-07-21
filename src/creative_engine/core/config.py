@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     app_name: str = "Creative AI Engine"
     debug: bool = False
     log_level: str = "INFO"
+    # Auditoría C1: sin esta clave configurada, la API queda abierta (uso
+    # local, tests, CI). Al definirla (CREATIVE_API_KEY), todo /api/v1/*
+    # exige la cabecera X-API-Key — pensado para el momento en que la API
+    # queda expuesta a internet (Railway) sin nada más delante.
+    api_key: str = ""
 
     llm: dict[str, LLMProviderConfig] = Field(default_factory=dict)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)

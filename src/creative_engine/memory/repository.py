@@ -253,22 +253,23 @@ class IdeaRepository:
             return [self.row_to_idea(row) for row in result.fetchall()]
 
     async def get_stats(self, run_id: str | None = None) -> dict[str, Any]:
-        """Estadísticas del repositorio."""
+        """Estadísticas del repositorio (globales, o de un run si se indica)."""
         async with self._session_factory() as session:
-            where = "WHERE run_id = :run_id" if run_id else ""
-            params: dict[str, Any] = {"run_id": run_id} if run_id else {}
-
+            # Sin f-string en el WHERE (auditoría M2): un único texto SQL fijo,
+            # el filtro opcional se resuelve por bind param, igual que en
+            # get_recent_elites.
             result = await session.execute(
-                text(f"""
+                text("""
                     SELECT
                         COUNT(*) as total,
                         COUNT(*) FILTER (WHERE status = 'elite') as elites,
                         COUNT(*) FILTER (WHERE status = 'discarded') as discarded,
                         AVG((evaluation->>'weighted_score')::FLOAT) as avg_fitness,
                         MAX((evaluation->>'weighted_score')::FLOAT) as max_fitness
-                    FROM ideas {where}
+                    FROM ideas
+                    WHERE CAST(:run_id AS TEXT) IS NULL OR run_id = CAST(:run_id AS TEXT)
                 """),
-                params,
+                {"run_id": run_id},
             )
             row = result.fetchone()
             return dict(row._mapping) if row else {}
