@@ -75,6 +75,16 @@ class EvolutionConfig(BaseModel):
     # k vecinos para el cálculo objetivo de novedad
     novelty_k_nearest: int = Field(default=5, ge=1, le=50)
 
+    # ── Guardrails de la API pública (auditoría C2) ──────────────────
+    # Sin este tope, un EvolutionRequest legítimo (population_size≤500,
+    # generations≤200) puede pedir hasta 100.000 evaluaciones LLM de golpe.
+    max_requested_evaluations: int = Field(default=2000, ge=1)
+    # Rate limit por IP en /evolution/* (en memoria, un solo proceso):
+    # cada run consume decenas/cientos de llamadas LLM, así que sin esto
+    # cualquiera con la URL puede agotar la cuota gratuita de los proveedores.
+    rate_limit_per_minute: int = Field(default=10, ge=1)
+    rate_limit_window_seconds: float = Field(default=60.0, gt=0.0)
+
 
 class Settings(BaseSettings):
     """Configuración global cargada desde env vars y archivos YAML."""
@@ -90,6 +100,11 @@ class Settings(BaseSettings):
     app_name: str = "Creative AI Engine"
     debug: bool = False
     log_level: str = "INFO"
+    # Auditoría C1: sin esta clave configurada, la API queda abierta (uso
+    # local, tests, CI). Al definirla (CREATIVE_API_KEY), todo /api/v1/*
+    # exige la cabecera X-API-Key — pensado para el momento en que la API
+    # queda expuesta a internet (Railway) sin nada más delante.
+    api_key: str = ""
 
     llm: dict[str, LLMProviderConfig] = Field(default_factory=dict)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)

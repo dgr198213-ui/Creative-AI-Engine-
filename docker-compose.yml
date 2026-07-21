@@ -12,12 +12,10 @@ services:
       - CREATIVE_DATABASE__NEO4J_PASSWORD=neo4j_dev
       - CREATIVE_DATABASE__REDIS_URL=redis://redis:6379/0
       - CREATIVE_LLM__DEFAULT__API_KEY=${OPENAI_API_KEY}
+    # Neo4j y Redis son opcionales (auditoría M3): el motor arranca y genera
+    # ideas sin ellos — solo Postgres es una dependencia dura de arranque.
     depends_on:
       postgres:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     volumes:
       - ./configs:/app/configs:ro

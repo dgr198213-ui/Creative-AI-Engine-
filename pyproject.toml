@@ -17,8 +17,6 @@ dependencies = [
     "pyyaml>=6.0.2",
     "asyncpg>=0.30.0",
     "sqlalchemy[asyncio]>=2.0.36",
-    "neo4j>=5.27.0",
-    "redis>=5.2.0",
     "sentence-transformers>=3.3.0",
     "numpy>=1.26.0",
     "structlog>=24.4.0",
@@ -28,6 +26,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Auditoría M3: neo4j y redis no están en el camino activo del motor
+# (IdeaKnowledgeGraph nunca se conecta hoy; RecommendationEngine funciona
+# solo con el repositorio Postgres). Se aíslan como extra para no cargar
+# la imagen de producción con dependencias sin usar; `graph.py` importa
+# `neo4j` de forma perezosa, así que el resto del motor funciona sin ellas.
+graph = [
+    "neo4j>=5.27.0",
+    "redis>=5.2.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",

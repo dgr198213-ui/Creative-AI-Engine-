@@ -46,6 +46,39 @@ inyecta y el contenedor lo respeta.
 - `https://<tu-dominio>.railway.app/health` → `{"status":"ok"}`.
 - `https://<tu-dominio>.railway.app/docs` → la API.
 
+## Seguridad antes de compartir la URL (auditoría 21-jul-2026)
+
+La API pública sin protección permite a cualquiera con la URL lanzar runs
+de evolución y quemar tu cuota de LLM. Antes de compartir el dominio de
+Railway con nadie:
+
+- **`CREATIVE_API_KEY`** — defínela para exigir la cabecera `X-API-Key` en
+  todo `/api/v1/*` (el panel la pide una vez con un prompt simple y la
+  recuerda en el navegador). Sin esta variable, la API queda abierta como
+  hoy — imprescindible en cuanto el dominio es público.
+- **`/docs` y `/redoc`** solo se sirven con `CREATIVE_DEBUG=true`; en
+  producción (`CREATIVE_DEBUG` sin definir o `false`) quedan ocultos.
+- **Tope de presupuesto y rate limit** ya vienen activos por defecto
+  (`CREATIVE_EVOLUTION__MAX_REQUESTED_EVALUATIONS`,
+  `CREATIVE_EVOLUTION__RATE_LIMIT_PER_MINUTE`) — ver `.env.example` para
+  ajustarlos.
+
+### Inventario de proveedores LLM (gobernanza de `CREATIVE_LLM__*`)
+
+Cada vez que cambies una variable `CREATIVE_LLM__*` en Railway, anótalo
+aquí (o en tu propio registro) — el routing en producción solo debe
+incluir proveedores que reconozcas:
+
+| Nombre (`CREATIVE_LLM__<NOMBRE>__*`) | Backend real | Modelo | Añadido/cambiado | Por qué |
+|---|---|---|---|---|
+| default | Gemini | gemini-flash-latest | — | recomendado (free tier estable) |
+| _(rellenar por cada proveedor extra: terra, luna, zai...)_ | | | | |
+
+Tras cada deploy, confirma en los logs la línea `model_router_ready` (la
+emite `LLMModelRouter` al arrancar): lista los proveedores y el routing
+activos. Si aparece un nombre que no está en tu inventario, alguien cambió
+la configuración sin registrarlo — investígalo antes de dejarlo correr.
+
 ## Notas de robustez ya incluidas
 
 - **Arranque tolerante:** si la BD no está lista, la app reintenta con backoff

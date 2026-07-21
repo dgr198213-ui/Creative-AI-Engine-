@@ -73,9 +73,24 @@ def create_app() -> FastAPI:
         ),
         version=__version__,
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
+        # Auditoría A2: el esquema OpenAPI interactivo no debe quedar expuesto
+        # en producción (combinado con una API sin auth, es un mapa completo
+        # de la superficie de ataque). Solo se sirve con debug=True.
+        docs_url="/docs" if settings.debug else None,
+        redoc_url="/redoc" if settings.debug else None,
+        openapi_url="/openapi.json" if settings.debug else None,
     )
+
+    from .guardrails import InMemoryRateLimiter
+
+    app.state.rate_limiter = InMemoryRateLimiter()
+
+    # Auditoría C1: API key obligatoria en /api/v1/* si CREATIVE_API_KEY está
+    # configurada (añadido antes que CORS para no autenticar preflight OPTIONS,
+    # que el middleware ya deja pasar explícitamente).
+    from .auth import ApiKeyMiddleware
+
+    app.add_middleware(ApiKeyMiddleware)
 
     # CORS: abierto en desarrollo; restringir orígenes antes de exponer públicamente.
     app.add_middleware(
