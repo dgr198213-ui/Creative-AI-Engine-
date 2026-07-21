@@ -193,7 +193,8 @@ class IdeaRepository:
                 text("""
                     SELECT * FROM ideas
                     WHERE status = 'elite'
-                      AND (:exclude_run_id IS NULL OR run_id != :exclude_run_id)
+                      AND (CAST(:exclude_run_id AS TEXT) IS NULL
+                           OR run_id != CAST(:exclude_run_id AS TEXT))
                     ORDER BY created_at DESC
                     LIMIT :limit
                 """),

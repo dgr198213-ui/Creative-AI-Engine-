@@ -225,3 +225,23 @@ class TestEngineIntegration:
             "prompt"
         ) or llm.generate.await_args_list[0].args[0]
         assert "MEMORIA DE EXPLORACIONES" not in first_prompt
+
+
+class TestRecentElitesQuery:
+    """La query de memoria entre runs debe castear el parámetro nullable.
+
+    asyncpg no puede inferir el tipo de un parámetro usado en 'X IS NULL'
+    sin cast explícito → AmbiguousParameterError (visto en producción).
+    El CAST(... AS TEXT) es obligatorio; este test evita reintroducir el bug.
+    """
+
+    def test_query_casts_nullable_param(self) -> None:
+        import inspect
+
+        from creative_engine.memory import repository
+
+        source = inspect.getsource(repository.IdeaRepository.get_recent_elites)
+        assert "CAST(:exclude_run_id AS TEXT) IS NULL" in source, (
+            "el parámetro nullable debe castearse o asyncpg da "
+            "AmbiguousParameterError"
+        )
