@@ -27,6 +27,7 @@ Todo se configura por variables de entorno, sin tocar código:
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import structlog
@@ -62,8 +63,27 @@ class RoledLLM:
         return None
 
 
+class _BreakerState:
+    """Estado del disyuntor de un proveedor (CLOSED → OPEN → half-open)."""
+
+    __slots__ = ("failures", "open_until")
+
+    def __init__(self) -> None:
+        self.open_until: float = 0.0
+        self.failures: int = 0
+
+
 class LLMModelRouter:
-    """Orquesta varios proveedores LLM con enrutamiento por rol y failover."""
+    """Orquesta varios proveedores LLM con enrutamiento por rol y failover.
+
+    Incluye un disyuntor por proveedor: tras agotar reintentos por rate
+    limit / indisponibilidad / clave inválida, el proveedor entra en
+    enfriamiento (60s, duplicándose hasta 300s) y el router lo salta sin
+    intentarlo — evita el patrón "reintenta contra el proveedor limitado
+    y vuelve a fallar" detectado en producción. Pasado el enfriamiento,
+    la siguiente petición actúa de sonda (half-open): si triunfa, el
+    disyuntor se cierra; si falla, el enfriamiento se duplica.
+    """
 
     def __init__(
         self,
@@ -93,6 +113,10 @@ class LLMModelRouter:
                     available=list(providers),
                 )
 
+        self._breakers: dict[str, _BreakerState] = {
+            name: _BreakerState() for name in providers
+        }
+
         self._log = logger.bind(
             providers=list(providers),
             routing={r: c for r, c in self._routing.items()},
@@ -116,23 +140,59 @@ class LLMModelRouter:
         """
         chain = self._chain_for(role)
         last_error: Exception | None = None
+        attempted_any = False
 
-        for idx, name in enumerate(chain):
+        candidates = list(chain)
+        now = time.monotonic()
+
+        # Si TODOS los candidatos están en enfriamiento, forzamos una sonda
+        # (half-open) contra el que antes salga del enfriamiento: mejor un
+        # intento que fallar la operación sin probar nada.
+        if all(now < self._breakers[n].open_until for n in candidates):
+            candidates = [min(candidates, key=lambda n: self._breakers[n].open_until)]
+            self._log.info(
+                "circuit_forced_probe", role=role, provider=candidates[0]
+            )
+
+        for idx, name in enumerate(candidates):
+            breaker = self._breakers[name]
+            now = time.monotonic()
+
+            if now < breaker.open_until and len(candidates) > 1:
+                # Disyuntor abierto: saltar sin gastar reintentos.
+                self._log.debug(
+                    "circuit_open_skipping",
+                    role=role,
+                    provider=name,
+                    remaining_s=round(breaker.open_until - now, 1),
+                )
+                continue
+
             provider = self._providers[name]
             fn = getattr(provider, method)
+            attempted_any = True
             try:
                 result = await fn(prompt, **kwargs)
+                if breaker.failures:
+                    self._log.info("circuit_closed", provider=name)
+                breaker.failures = 0
+                breaker.open_until = 0.0
                 if idx > 0:
                     self._log.info("failover_succeeded", role=role, provider=name)
                 return result
             except (LLMRateLimitError, LLMAuthError) as e:
                 last_error = e
-                is_last = idx == len(chain) - 1
+                breaker.failures += 1
+                cooldown = min(60.0 * (2 ** (breaker.failures - 1)), 300.0)
+                breaker.open_until = time.monotonic() + cooldown
                 self._log.warning(
                     "provider_unavailable_failover",
                     role=role,
                     provider=name,
-                    next_provider=None if is_last else chain[idx + 1],
+                    cooldown_s=round(cooldown),
+                    next_provider=(
+                        candidates[idx + 1] if idx < len(candidates) - 1 else None
+                    ),
                     error=str(e),
                 )
                 continue
@@ -140,9 +200,10 @@ class LLMModelRouter:
                 # Error no relacionado con disponibilidad → no hacer failover.
                 raise
 
-        # Se agotó toda la cadena por indisponibilidad.
+        # Se agotó toda la cadena por indisponibilidad (o enfriamiento).
         raise LLMError(
-            f"Todos los proveedores del rol '{role}' no están disponibles: {chain}",
+            f"Todos los proveedores del rol '{role}' no están disponibles: {chain}"
+            + ("" if attempted_any else " (todos en enfriamiento)"),
             details={"role": role, "chain": chain, "last_error": str(last_error)},
         )
 

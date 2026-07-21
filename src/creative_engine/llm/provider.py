@@ -112,8 +112,10 @@ class LLMProvider:
 
     @retry(
         retry=retry_if_exception_type((LLMRateLimitError, httpx.ConnectError)),
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
+        # Pocos reintentos internos: el disyuntor del router gestiona la
+        # indisponibilidad sostenida. Así el failover tarda segundos, no minutos.
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
         reraise=True,
     )
     async def _call_api(

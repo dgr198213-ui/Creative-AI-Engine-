@@ -77,12 +77,14 @@ class IdeaGeneratorAgent:
 
         batches_needed = (count + batch_size - 1) // batch_size
 
-        for i in range(batches_needed):
+        # Contrato de cardinalidad: intentos extra para rellenar lotes
+        # fallidos/cortos, y nunca devolver más de lo pedido.
+        max_attempts = batches_needed + 2
+        attempt = 0
+        while len(all_ideas) < count and attempt < max_attempts:
             remaining = count - len(all_ideas)
-            if remaining <= 0:
-                break
             batch_count = min(batch_size, remaining)
-            batch_hint = self._get_variation_hint(variation_hint, i, batches_needed)
+            batch_hint = self._get_variation_hint(variation_hint, attempt, batches_needed)
 
             try:
                 batch = await self._generate_batch(
@@ -93,8 +95,10 @@ class IdeaGeneratorAgent:
                 )
                 all_ideas.extend(batch)
             except Exception as e:
-                self._log.warning("generation_batch_failed", batch=i, error=str(e))
+                self._log.warning("generation_batch_failed", batch=attempt, error=str(e))
+            attempt += 1
 
+        all_ideas = all_ideas[:count]
         self._log.info("population_generated", requested=count, generated=len(all_ideas))
         return all_ideas
 

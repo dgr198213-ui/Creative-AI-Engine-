@@ -99,6 +99,8 @@ class QDEngine:
         if request.custom_weights:
             domain = domain.model_copy(update={"evaluation_weights": request.custom_weights})
 
+        import structlog.contextvars as _ctx
+
         state_kwargs: dict[str, Any] = {}
         if request.run_id:
             state_kwargs["run_id"] = request.run_id
@@ -110,6 +112,11 @@ class QDEngine:
             population_size=request.population_size or domain.default_population_size,
             is_running=True,
         )
+
+        # run_id en TODOS los logs del run (mutaciones, cruces, proveedor,
+        # puerta de sorpresa...) vía contextvars — correlacionable aunque
+        # haya varias ejecuciones simultáneas.
+        _ctx.bind_contextvars(run_id=state.run_id)
 
         archive = MAPElitesArchive(
             grid_shape=domain.grid_shape,
@@ -259,6 +266,8 @@ class QDEngine:
             )
             self._log.error("evolution_failed", run_id=state.run_id, error=str(e))
             raise EvolutionError(f"Evolución fallida: {e}") from e
+        finally:
+            _ctx.unbind_contextvars("run_id")
 
     async def _create_generation(
         self,

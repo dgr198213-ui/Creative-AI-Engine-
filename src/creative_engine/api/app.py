@@ -105,6 +105,7 @@ def create_app() -> FastAPI:
     # Panel web (una sola pantalla) servido como estáticos
     from pathlib import Path
 
+    from fastapi import Response
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 
@@ -115,6 +116,11 @@ def create_app() -> FastAPI:
         @app.get("/", include_in_schema=False)
         async def index() -> FileResponse:
             return FileResponse(str(static_dir / "index.html"))
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon() -> Response:
+            # 204 en vez de 404: sin favicon dedicado, sin ruido en los logs.
+            return Response(status_code=204)
 
     return app
 

@@ -233,3 +233,81 @@ class TestRouterInQDCycle:
         evaluated = [c for c in state.archive if c.elite.evaluation and c.elite.evaluation.utility > 0]
         assert len(evaluated) == len(state.archive)
         assert groq.generate_structured.await_count > 0
+
+
+class TestCircuitBreaker:
+    """Disyuntor por proveedor: no reintentar contra proveedores caídos."""
+
+    async def test_open_breaker_skips_provider(self) -> None:
+        """Tras fallar, el proveedor entra en enfriamiento y la siguiente
+        operación va DIRECTA al alternativo sin intentar el caído."""
+        p1 = _provider("gemini")
+        p1.generate.side_effect = LLMRateLimitError("saturado")
+        p2 = _provider("groq", generate_return="ok groq")
+
+        router = LLMModelRouter(
+            {"gemini": p1, "groq": p2},
+            routing={"generator": ["gemini", "groq"]},
+        )
+        llm = router.for_role("generator")
+
+        # 1ª llamada: gemini falla (abre disyuntor), failover a groq
+        assert await llm.generate("a") == "ok groq"
+        assert p1.generate.await_count == 1
+
+        # 2ª llamada: gemini está en enfriamiento → NO se intenta
+        assert await llm.generate("b") == "ok groq"
+        assert p1.generate.await_count == 1  # sigue en 1: no se reintentó
+        assert p2.generate.await_count == 2
+
+    async def test_breaker_closes_after_cooldown_success(self) -> None:
+        """Pasado el enfriamiento, la sonda (half-open) puede cerrar el circuito."""
+        p1 = _provider("gemini")
+        p1.generate.side_effect = [LLMRateLimitError("saturado"), "gemini ok"]
+        p2 = _provider("groq", generate_return="ok groq")
+
+        router = LLMModelRouter(
+            {"gemini": p1, "groq": p2},
+            routing={"generator": ["gemini", "groq"]},
+        )
+        llm = router.for_role("generator")
+
+        await llm.generate("a")  # abre el disyuntor de gemini
+        # Simular que el enfriamiento expiró
+        router._breakers["gemini"].open_until = 0.0
+
+        result = await llm.generate("b")  # sonda: gemini responde
+        assert result == "gemini ok"
+        assert router._breakers["gemini"].failures == 0  # circuito cerrado
+
+    async def test_all_open_forces_probe(self) -> None:
+        """Con todos los proveedores en enfriamiento, se fuerza una sonda
+        en vez de fallar la operación sin intentar nada."""
+        p1 = _provider("gemini", generate_return="volvió gemini")
+        router = LLMModelRouter({"gemini": p1})
+        # Forzar disyuntor abierto lejos en el futuro
+        import time as _time
+
+        router._breakers["gemini"].open_until = _time.monotonic() + 999
+        router._breakers["gemini"].failures = 1
+
+        result = await router.for_role("generator").generate("x")
+        assert result == "volvió gemini"
+
+    async def test_repeated_failures_double_cooldown(self) -> None:
+        p1 = _provider("gemini")
+        p1.generate.side_effect = LLMRateLimitError("saturado")
+        router = LLMModelRouter({"gemini": p1})
+        llm = router.for_role("generator")
+
+        import contextlib
+        import time as _time
+
+        for expected_min in (60, 120):
+            router._breakers["gemini"].open_until = 0.0  # permitir sonda
+            with contextlib.suppress(Exception):
+                await llm.generate("x")
+            remaining = router._breakers["gemini"].open_until - _time.monotonic()
+            assert remaining >= expected_min - 2, (
+                f"enfriamiento esperado ≥{expected_min}s, quedó {remaining:.0f}s"
+            )

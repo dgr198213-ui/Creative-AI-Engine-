@@ -14,6 +14,13 @@ COPY configs/ configs/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
 
+# Precargar el modelo de embeddings en la imagen: elimina la descarga de
+# HuggingFace en el primer run (latencia + dependencia de red en runtime).
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# Logs sin buffering: los timestamps llegan al colector sin retraso.
+ENV PYTHONUNBUFFERED=1
+
 # Railway/PaaS asignan el puerto por la variable PORT.
 ENV PORT=8000
 EXPOSE 8000
