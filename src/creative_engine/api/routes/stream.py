@@ -102,6 +102,7 @@ async def stream_evolution(request_body: EvolutionRequest, request: Request) -> 
                     "done",
                     {
                         "run_id": state.run_id,
+                        "status": state.status,
                         "generations": state.generation,
                         "total_ideas": len(state.all_ideas),
                         "families": _families_payload(state.archive),

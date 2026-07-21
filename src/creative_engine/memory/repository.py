@@ -53,6 +53,16 @@ CREATE INDEX IF NOT EXISTS idx_ideas_generation ON ideas(generation);
 CREATE INDEX IF NOT EXISTS idx_ideas_fitness ON ideas(
     ((evaluation->>'weighted_score')::FLOAT)
 );
+
+CREATE TABLE IF NOT EXISTS run_status (
+    run_id      VARCHAR(64) PRIMARY KEY,
+    status      VARCHAR(20) NOT NULL DEFAULT 'running',
+    error       TEXT,
+    challenge   TEXT NOT NULL DEFAULT '',
+    domain      VARCHAR(30) NOT NULL DEFAULT 'generic',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 
@@ -262,6 +272,50 @@ class IdeaRepository:
             )
             row = result.fetchone()
             return dict(row._mapping) if row else {}
+
+    async def save_run_status(
+        self,
+        run_id: str,
+        status: str,
+        error: str | None = None,
+        challenge: str = "",
+        domain: str = "generic",
+    ) -> None:
+        """Guarda el estado final de un run (running/completed/failed).
+
+        Permite a `/runs/{run_id}/export` distinguir un run que falló sin
+        generar ideas (devolver el estado failed) de un run inexistente
+        (404), sin depender solo de si hay élites en `ideas`.
+        """
+        async with self._session_factory() as session:
+            await session.execute(
+                text("""
+                    INSERT INTO run_status (run_id, status, error, challenge, domain, updated_at)
+                    VALUES (:run_id, :status, :error, :challenge, :domain, NOW())
+                    ON CONFLICT (run_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        error = EXCLUDED.error,
+                        updated_at = EXCLUDED.updated_at
+                """),
+                {
+                    "run_id": run_id,
+                    "status": status,
+                    "error": error,
+                    "challenge": challenge,
+                    "domain": domain,
+                },
+            )
+            await session.commit()
+
+    async def get_run_status(self, run_id: str) -> dict[str, Any] | None:
+        """Estado final persistido de un run, si existe."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("SELECT * FROM run_status WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
 
     @staticmethod
     def row_to_idea(row: Any) -> Idea:

@@ -24,6 +24,9 @@ class _NullRepo:
             raise IdeaNotFoundError(idea_id)
         return self._store[idea_id]
 
+    async def get_run_status(self, run_id: str) -> dict | None:
+        return None
+
     async def initialize(self) -> None: ...
     async def close(self) -> None: ...
 

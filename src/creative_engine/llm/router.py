@@ -32,7 +32,12 @@ from typing import Any
 
 import structlog
 
-from ..core.exceptions import LLMAuthError, LLMError, LLMRateLimitError
+from ..core.exceptions import (
+    LLMAuthError,
+    LLMError,
+    LLMInvalidRequestError,
+    LLMRateLimitError,
+)
 from .provider import LLMProvider
 
 logger = structlog.get_logger(__name__)
@@ -116,6 +121,11 @@ class LLMModelRouter:
         self._breakers: dict[str, _BreakerState] = {
             name: _BreakerState() for name in providers
         }
+        # Proveedores que rechazan la petición con 400 invalid_request_error
+        # no se recuperan con el tiempo (a diferencia de un rate limit): es
+        # una incompatibilidad de parámetros con esa API concreta. Se
+        # deshabilitan para el resto del run, no solo con enfriamiento.
+        self._disabled_for_run: set[str] = set()
 
         self._log = logger.bind(
             providers=list(providers),
@@ -142,7 +152,13 @@ class LLMModelRouter:
         last_error: Exception | None = None
         attempted_any = False
 
-        candidates = list(chain)
+        candidates = [name for name in chain if name not in self._disabled_for_run]
+        if not candidates:
+            raise LLMError(
+                f"Todos los proveedores del rol '{role}' están deshabilitados "
+                f"para este run (400 invalid_request_error): {chain}",
+                details={"role": role, "chain": chain},
+            )
         now = time.monotonic()
 
         # Si TODOS los candidatos están en enfriamiento, forzamos una sonda
@@ -190,6 +206,22 @@ class LLMModelRouter:
                     role=role,
                     provider=name,
                     cooldown_s=round(cooldown),
+                    next_provider=(
+                        candidates[idx + 1] if idx < len(candidates) - 1 else None
+                    ),
+                    error=str(e),
+                )
+                continue
+            except LLMInvalidRequestError as e:
+                # 400 invalid_request_error no se arregla esperando (a
+                # diferencia de un rate limit): deshabilitar el proveedor
+                # para el resto del run y rotar al siguiente de la cadena.
+                last_error = e
+                self._disabled_for_run.add(name)
+                self._log.warning(
+                    "provider_disabled_for_run",
+                    role=role,
+                    provider=name,
                     next_provider=(
                         candidates[idx + 1] if idx < len(candidates) - 1 else None
                     ),

@@ -190,13 +190,22 @@ async def export_run_markdown(
     """
     from datetime import UTC, datetime
 
-    from fastapi.responses import PlainTextResponse
+    from fastapi.responses import JSONResponse, PlainTextResponse
 
     from ...evolution.clustering import group_into_families
 
     repo = require_repo(request)
     elites = await repo.get_elites_by_run(run_id, limit=limit)
     if not elites:
+        run_status = await repo.get_run_status(run_id)
+        if run_status and run_status.get("status") == "failed":
+            return JSONResponse(
+                {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "error": run_status.get("error"),
+                }
+            )
         raise HTTPException(status_code=404, detail=f"Sin élites para el run {run_id}")
 
     families = group_into_families(elites, distance_threshold=distance_threshold)

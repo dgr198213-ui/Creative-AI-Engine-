@@ -264,6 +264,36 @@ class QDEngine:
             state.is_running = False
             state.completed_at = datetime.now(UTC)
 
+            if not state.all_ideas:
+                # Ni una sola idea se procesó en todo el run: la cadena de
+                # proveedores LLM se agotó por completo (visto en producción:
+                # un proveedor rechazaba cada petición y el failover no
+                # saltaba, dando un run "completado" con 0 élites). Abortar
+                # con estado failed en vez de reportar éxito vacío.
+                state.status = "failed"
+                state.error = (
+                    "No se generó ninguna idea en todo el run: la cadena de "
+                    "proveedores LLM se agotó por completo."
+                )
+                await self._repo_save_run_status(state, request)
+
+                await self._bus.publish(
+                    Event(
+                        type=EventType.EVOLUTION_FAILED,
+                        data={"run_id": state.run_id, "error": state.error},
+                        source="QDEngine",
+                    )
+                )
+                self._log.error(
+                    "evolution_aborted_empty_population",
+                    run_id=state.run_id,
+                    generations_attempted=state.generation,
+                )
+                return state
+
+            state.status = "completed"
+            await self._repo_save_run_status(state, request)
+
             await self._bus.publish(
                 Event(
                     type=EventType.EVOLUTION_COMPLETED,
@@ -289,6 +319,9 @@ class QDEngine:
 
         except Exception as e:
             state.is_running = False
+            state.status = "failed"
+            state.error = str(e)
+            await self._repo_save_run_status(state, request)
             await self._bus.publish(
                 Event(
                     type=EventType.EVOLUTION_FAILED,
@@ -300,6 +333,23 @@ class QDEngine:
             raise EvolutionError(f"Evolución fallida: {e}") from e
         finally:
             _ctx.unbind_contextvars("run_id")
+
+    async def _repo_save_run_status(
+        self, state: EvolutionState, request: EvolutionRequest
+    ) -> None:
+        """Persiste el estado final del run (best-effort, sin BD se omite)."""
+        if self._repository is None:
+            return
+        try:
+            await self._repository.save_run_status(
+                state.run_id,
+                status=state.status,
+                error=state.error,
+                challenge=request.challenge,
+                domain=request.domain.value,
+            )
+        except Exception as e:
+            self._log.warning("run_status_persist_failed", run_id=state.run_id, error=str(e))
 
     async def _cross_run_memory_hint(self, challenge: str, run_id: str) -> str | None:
         """Hint de inspiración+repulsión con élites afines de runs pasados.

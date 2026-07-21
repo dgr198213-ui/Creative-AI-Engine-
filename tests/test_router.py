@@ -235,6 +235,75 @@ class TestRouterInQDCycle:
         assert groq.generate_structured.await_count > 0
 
 
+class TestInvalidRequestDisablesProvider:
+    """400 invalid_request_error: rotar y deshabilitar para el resto del run."""
+
+    async def test_400_invalid_request_rotates_to_next_provider(self) -> None:
+        from creative_engine.core.exceptions import LLMInvalidRequestError
+
+        p1 = _provider("terra")
+        p1.generate.side_effect = LLMInvalidRequestError("max_tokens no soportado")
+        p2 = _provider("zai", generate_return="respuesta de zai")
+
+        router = LLMModelRouter(
+            {"terra": p1, "zai": p2},
+            routing={"generator": ["terra", "zai"]},
+        )
+        result = await router.for_role("generator").generate("x")
+
+        assert result == "respuesta de zai"
+        p1.generate.assert_awaited_once()
+        p2.generate.assert_awaited_once()
+
+    async def test_disabled_provider_stays_disabled_for_rest_of_run(self) -> None:
+        """A diferencia del disyuntor por rate limit, no hay enfriamiento:
+        el proveedor no se vuelve a intentar en todo el run."""
+        from creative_engine.core.exceptions import LLMInvalidRequestError
+
+        p1 = _provider("terra")
+        p1.generate.side_effect = LLMInvalidRequestError("max_tokens no soportado")
+        p2 = _provider("zai", generate_return="respuesta de zai")
+
+        router = LLMModelRouter(
+            {"terra": p1, "zai": p2},
+            routing={"generator": ["terra", "zai"]},
+        )
+        llm = router.for_role("generator")
+
+        await llm.generate("primera")
+        await llm.generate("segunda")
+
+        # terra solo se intentó una vez: quedó deshabilitado para el run.
+        assert p1.generate.await_count == 1
+        assert p2.generate.await_count == 2
+
+    async def test_all_providers_invalid_request_raises_clean_error(self) -> None:
+        from creative_engine.core.exceptions import LLMInvalidRequestError
+
+        p1 = _provider("terra")
+        p1.generate.side_effect = LLMInvalidRequestError("max_tokens no soportado")
+
+        router = LLMModelRouter({"terra": p1})
+        with pytest.raises(LLMError):
+            await router.for_role("generator").generate("x")
+
+    async def test_disabled_for_run_tracked_internally(self) -> None:
+        """El proveedor que devuelve 400 invalid_request_error se marca
+        internamente como deshabilitado para el run (provider_disabled_for_run)."""
+        from creative_engine.core.exceptions import LLMInvalidRequestError
+
+        p1 = _provider("terra")
+        p1.generate.side_effect = LLMInvalidRequestError("max_tokens no soportado")
+        p2 = _provider("zai", generate_return="ok")
+
+        router = LLMModelRouter(
+            {"terra": p1, "zai": p2}, routing={"generator": ["terra", "zai"]}
+        )
+        assert "terra" not in router._disabled_for_run
+        await router.for_role("generator").generate("x")
+        assert "terra" in router._disabled_for_run
+
+
 class TestCircuitBreaker:
     """Disyuntor por proveedor: no reintentar contra proveedores caídos."""
 

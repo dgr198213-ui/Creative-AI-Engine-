@@ -28,6 +28,16 @@ class LLMAuthError(LLMError):
     """API key inválida o sin permisos en el proveedor."""
 
 
+class LLMInvalidRequestError(LLMError):
+    """El proveedor rechazó la petición (400 invalid_request_error).
+
+    Típicamente un parámetro no soportado por ese modelo/API concreto
+    (p.ej. `max_tokens` en vez de `max_completion_tokens`). No es
+    reintentable contra el mismo proveedor: señala una incompatibilidad,
+    no una indisponibilidad transitoria.
+    """
+
+
 class LLMResponseParseError(LLMError):
     """La respuesta del LLM no pudo parsearse al formato esperado."""
 
