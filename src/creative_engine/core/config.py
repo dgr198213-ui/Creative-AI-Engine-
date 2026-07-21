@@ -61,6 +61,9 @@ class EvolutionConfig(BaseModel):
     cross_run_memory_enabled: bool = True
     cross_run_memory_k: int = Field(default=3, ge=1, le=10)
     cross_run_memory_min_similarity: float = Field(default=0.25, ge=0.0, le=1.0)
+    # Operadores adaptativos: redistribuir el presupuesto generacional hacia
+    # el operador (mutación/cruce/fresco) que está produciendo élites.
+    adaptive_operators_enabled: bool = True
     mutation_rate: float = Field(default=0.4, ge=0.0, le=1.0)
     crossover_rate: float = Field(default=0.25, ge=0.0, le=1.0)
     random_injection_rate: float = Field(default=0.1, ge=0.0, le=0.5)

@@ -93,6 +93,20 @@ class QDEngine:
         else:
             self._surprise_gate = None
 
+        # Operadores adaptativos: el motor aprende qué operador rinde en
+        # este reto y redistribuye el presupuesto (cero llamadas extra).
+        self._op_scheduler = None
+        if evo.adaptive_operators_enabled:
+            from .adaptive_operators import OperatorScheduler
+
+            self._op_scheduler = OperatorScheduler(
+                base_rates={
+                    "mutation": evo.mutation_rate,
+                    "crossover": evo.crossover_rate,
+                    "fresh": evo.random_injection_rate,
+                }
+            )
+
     async def run_evolution(self, request: EvolutionRequest) -> EvolutionState:
         """Ejecuta el ciclo evolutivo completo y devuelve el estado final."""
         domain = self._settings.get_domain(request.domain)
@@ -175,13 +189,27 @@ class QDEngine:
 
                 cells_before = len(archive.occupied_cells)
 
-                new_ideas = await self._create_generation(
+                new_ideas, ideas_by_op = await self._create_generation(
                     archive=archive,
                     domain=domain,
                     context=context,
                     pop_size=state.population_size,
                 )
                 await self._process_batch(new_ideas, archive, domain, context, state)
+
+                # Operadores adaptativos: registrar qué operador produjo
+                # élites en esta generación y desvanecer la historia.
+                if self._op_scheduler is not None:
+                    for op_name, op_ideas in ideas_by_op.items():
+                        if op_ideas:
+                            self._op_scheduler.record(
+                                op_name,
+                                attempted=len(op_ideas),
+                                inserted=sum(
+                                    1 for i in op_ideas if i.status == IdeaStatus.ELITE
+                                ),
+                            )
+                    self._op_scheduler.decay()
 
                 # Adaptación del umbral de sorpresa según el progreso:
                 # estancamiento (sin celdas nuevas) → abrir la puerta;
@@ -316,15 +344,22 @@ class QDEngine:
         domain: DomainConfig,
         context: dict[str, Any],
         pop_size: int,
-    ) -> list[Idea]:
-        """Crea una nueva generación de ideas a partir del archivo."""
+    ) -> tuple[list[Idea], dict[str, list[Idea]]]:
+        """Crea una nueva generación; devuelve las ideas y su atribución por operador."""
         cfg = self._settings.evolution
         new_ideas: list[Idea] = []
         occupied = len(archive.occupied_cells)
+        by_operator: dict[str, list[Idea]] = {"mutation": [], "crossover": [], "fresh": []}
 
-        n_mutations = int(pop_size * cfg.mutation_rate)
-        n_crossovers = int(pop_size * cfg.crossover_rate)
-        n_random = max(1, int(pop_size * cfg.random_injection_rate))
+        if self._op_scheduler is not None:
+            allocation = self._op_scheduler.allocate(pop_size)
+            n_mutations = allocation["mutation"]
+            n_crossovers = allocation["crossover"]
+            n_random = allocation["fresh"]
+        else:
+            n_mutations = int(pop_size * cfg.mutation_rate)
+            n_crossovers = int(pop_size * cfg.crossover_rate)
+            n_random = max(1, int(pop_size * cfg.random_injection_rate))
 
         # Reconstrucción tras apagón: si el archivo está vacío (p.ej. la
         # población inicial se perdió por caída simultánea de proveedores),
@@ -337,7 +372,9 @@ class QDEngine:
         # ── Mutaciones (selección por curiosidad: regiones poco exploradas) ──
         if n_mutations > 0 and occupied > 0:
             parents = archive.select_curious(n_mutations, self._rng)
-            new_ideas.extend(await self._mutation.batch_mutate(parents))
+            mutated = await self._mutation.batch_mutate(parents)
+            by_operator["mutation"].extend(mutated)
+            new_ideas.extend(mutated)
 
         # ── Cruces ──
         if n_crossovers > 0 and occupied >= 2:
@@ -347,7 +384,9 @@ class QDEngine:
                 if pair:
                     pairs.append(pair)
             if pairs:
-                new_ideas.extend(await self._crossover.batch_crossover(pairs))
+                crossed = await self._crossover.batch_crossover(pairs)
+                by_operator["crossover"].extend(crossed)
+                new_ideas.extend(crossed)
 
         # ── Inyección de ideas frescas con repulsión (best-shot invertido) ──
         # Estilo FunSearch: mostrar al generador lo mejor que ya existe,
@@ -372,12 +411,13 @@ class QDEngine:
                 count=n_random,
                 variation_hint=hint,
             )
+            by_operator["fresh"].extend(random_ideas)
             new_ideas.extend(random_ideas)
 
         for idea in new_ideas:
             idea.run_id = context.get("run_id", "")
 
-        return new_ideas
+        return new_ideas, by_operator
 
     async def _process_batch(
         self,

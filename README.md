@@ -229,6 +229,11 @@ TurboEvolve 2026, híbridos QD):
   al reto actual, inyectándolas en el prompt como inspiración + repulsión
   ("ya se exploró esto; ve más allá"). Cada run abona el siguiente. Un chat
   olvida; este motor acumula. Configurable vía `CREATIVE_EVOLUTION__CROSS_RUN_MEMORY_*`.
+- **Operadores adaptativos** (`OperatorScheduler`): el motor observa qué
+  operador (mutación, cruce o inyección fresca) está produciendo élites en
+  ESTE reto y redistribuye el presupuesto de cada generación hacia lo que
+  funciona, con suelo de exploración del 15% para que ninguno se extinga.
+  La versión viable del Learned QD — meta-cognición sin llamadas extra.
 - **Puerta de sorpresa adaptativa** (`SurpriseGate`, del K-adaptativo de
   TurboEvolve — y curiosamente lo que el propio motor propuso como mejora):
   antes de gastar una evaluación LLM en una idea nueva, se mide su distancia
