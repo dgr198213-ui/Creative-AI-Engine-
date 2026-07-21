@@ -223,6 +223,12 @@ TurboEvolve 2026, híbridos QD):
   ideas frescas muestra al generador los mejores enfoques existentes pidiendo
   explícitamente alejarse de ellos. Diversidad dirigida sin llamadas extra.
 
+- **Memoria entre runs** (grounding del generador): antes de generar la
+  población inicial, el motor recupera élites de ejecuciones pasadas y
+  selecciona por similitud de embeddings (local, sin coste LLM) las afines
+  al reto actual, inyectándolas en el prompt como inspiración + repulsión
+  ("ya se exploró esto; ve más allá"). Cada run abona el siguiente. Un chat
+  olvida; este motor acumula. Configurable vía `CREATIVE_EVOLUTION__CROSS_RUN_MEMORY_*`.
 - **Puerta de sorpresa adaptativa** (`SurpriseGate`, del K-adaptativo de
   TurboEvolve — y curiosamente lo que el propio motor propuso como mejora):
   antes de gastar una evaluación LLM en una idea nueva, se mide su distancia

@@ -180,6 +180,27 @@ class IdeaRepository:
             )
             return [self.row_to_idea(row) for row in result.fetchall()]
 
+    async def get_recent_elites(
+        self, limit: int = 200, exclude_run_id: str | None = None
+    ) -> list[Idea]:
+        """Élites recientes de runs anteriores (memoria entre ejecuciones).
+
+        Alimenta el grounding del generador: ideas ya descubiertas en retos
+        pasados que pueden servir de inspiración/repulsión en retos nuevos.
+        """
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("""
+                    SELECT * FROM ideas
+                    WHERE status = 'elite'
+                      AND (:exclude_run_id IS NULL OR run_id != :exclude_run_id)
+                    ORDER BY created_at DESC
+                    LIMIT :limit
+                """),
+                {"exclude_run_id": exclude_run_id, "limit": limit},
+            )
+            return [self.row_to_idea(row) for row in result.fetchall()]
+
     async def get_lineage(self, idea_id: str, max_depth: int = 25) -> list[Idea]:
         """Linaje de una idea siguiendo el primer padre (con tope de profundidad)."""
         lineage: list[Idea] = []

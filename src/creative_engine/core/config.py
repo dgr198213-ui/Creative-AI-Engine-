@@ -55,6 +55,12 @@ class EvolutionConfig(BaseModel):
     surprise_threshold_min: float = Field(default=0.02, ge=0.0, le=1.0)
     surprise_threshold_max: float = Field(default=0.20, ge=0.0, le=1.0)
     surprise_threshold_step: float = Field(default=0.02, ge=0.0, le=0.2)
+    # Memoria entre runs: inyectar élites afines de ejecuciones pasadas en
+    # el prompt de la población inicial (inspiración + repulsión). Cero
+    # llamadas LLM extra; requiere persistencia (sin BD se omite sola).
+    cross_run_memory_enabled: bool = True
+    cross_run_memory_k: int = Field(default=3, ge=1, le=10)
+    cross_run_memory_min_similarity: float = Field(default=0.25, ge=0.0, le=1.0)
     mutation_rate: float = Field(default=0.4, ge=0.0, le=1.0)
     crossover_rate: float = Field(default=0.25, ge=0.0, le=1.0)
     random_injection_rate: float = Field(default=0.1, ge=0.0, le=0.5)

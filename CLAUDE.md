@@ -54,6 +54,12 @@ El flujo del motor (`qd_engine._process_batch`): **codificar (local, gratis)
 objetiva → insertar en el archivo**. El orden importa: la evaluación LLM es
 el recurso escaso; todo lo que se pueda decidir con embeddings va antes.
 
+Memoria entre runs (`grounding.py`): antes de la población inicial, el motor
+recupera élites de runs pasados y las afines al reto (similitud de
+embeddings, local) van al prompt como inspiración+repulsión. Cero llamadas
+LLM extra; degrada sola sin persistencia. Es el foso del producto: cada run
+abona el siguiente.
+
 ## Invariantes que NO se rompen
 
 Estas decisiones son deliberadas. Cambiarlas exige una razón muy buena:

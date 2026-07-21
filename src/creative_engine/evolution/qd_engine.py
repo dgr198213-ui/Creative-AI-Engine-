@@ -153,11 +153,15 @@ class QDEngine:
         }
 
         try:
+            # ── Memoria entre runs: grounding con élites de retos pasados ──
+            memory_hint = await self._cross_run_memory_hint(request.challenge, state.run_id)
+
             # ── Generación 0: población inicial ──
             initial_ideas = await self._generator.generate_population(
                 challenge=request.challenge,
                 domain=domain,
                 count=state.population_size,
+                variation_hint=memory_hint or "",
             )
             for idea in initial_ideas:
                 idea.run_id = state.run_id
@@ -268,6 +272,43 @@ class QDEngine:
             raise EvolutionError(f"Evolución fallida: {e}") from e
         finally:
             _ctx.unbind_contextvars("run_id")
+
+    async def _cross_run_memory_hint(self, challenge: str, run_id: str) -> str | None:
+        """Hint de inspiración+repulsión con élites afines de runs pasados.
+
+        Cálculo local (embeddings) sobre lo ya persistido: cero llamadas LLM.
+        Degrada en silencio si no hay persistencia o la consulta falla.
+        """
+        cfg = self._settings.evolution
+        if not cfg.cross_run_memory_enabled or self._repository is None:
+            return None
+
+        try:
+            from .grounding import build_memory_hint, select_related_elites
+
+            past = await self._repository.get_recent_elites(
+                limit=200, exclude_run_id=run_id
+            )
+            if not past:
+                return None
+
+            challenge_vector = self._encoder._embed(challenge)
+            related = select_related_elites(
+                challenge_vector,
+                past,
+                k=cfg.cross_run_memory_k,
+                min_similarity=cfg.cross_run_memory_min_similarity,
+            )
+            if related:
+                self._log.info(
+                    "cross_run_memory_applied",
+                    related=[idea.title[:40] for idea in related],
+                    past_pool=len(past),
+                )
+            return build_memory_hint(related)
+        except Exception as e:
+            self._log.warning("cross_run_memory_failed", error=str(e))
+            return None
 
     async def _create_generation(
         self,
