@@ -20,7 +20,12 @@ from tenacity import (
 )
 
 from ..core.config import LLMProviderConfig
-from ..core.exceptions import LLMAuthError, LLMError, LLMRateLimitError
+from ..core.exceptions import (
+    LLMAuthError,
+    LLMError,
+    LLMInvalidRequestError,
+    LLMRateLimitError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -138,8 +143,14 @@ class LLMProvider:
             "model": self._config.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
         }
+        # La API real de OpenAI rechaza `max_tokens` en modelos recientes
+        # (400 invalid_request_error) y exige `max_completion_tokens`. El
+        # resto de proveedores compatibles siguen usando `max_tokens`.
+        if self._config.type == "openai":
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
         if response_format:
             payload["response_format"] = response_format
         if self._config.extra_body:
@@ -186,6 +197,28 @@ class LLMProvider:
                 f"(HTTP {resp.status_code}). Revisa la variable de la clave.",
                 details={"status": resp.status_code, "provider": self._config.name},
             )
+
+        if resp.status_code == 400:
+            try:
+                err_body = resp.json()
+            except Exception:
+                err_body = {}
+            err_type = (
+                (err_body.get("error") or {}).get("type")
+                if isinstance(err_body, dict)
+                else None
+            )
+            if err_type == "invalid_request_error":
+                raise LLMInvalidRequestError(
+                    f"Petición inválida en {self._config.name} "
+                    f"(400 invalid_request_error): "
+                    f"{(err_body.get('error') or {}).get('message', '')}",
+                    details={
+                        "status": 400,
+                        "provider": self._config.name,
+                        "error_type": err_type,
+                    },
+                )
 
         # 503/500: sobrecarga o error temporal del proveedor (p.ej. Gemini
         # 'high demand'). Reintentable con backoff igual que el rate limit.

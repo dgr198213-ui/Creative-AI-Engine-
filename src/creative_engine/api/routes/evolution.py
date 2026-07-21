@@ -85,7 +85,7 @@ async def start_evolution(request_body: EvolutionRequest, request: Request) -> d
 
     return {
         "run_id": state.run_id,
-        "status": "completed",
+        "status": state.status,
         "generations": state.generation,
         "total_ideas_generated": len(state.all_ideas),
         "coverage": state.coverage,

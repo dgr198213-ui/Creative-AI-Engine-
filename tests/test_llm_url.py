@@ -188,6 +188,134 @@ async def test_glm_thinking_disabled_by_default() -> None:
         await provider.close()
 
 
+async def test_openai_type_uses_max_completion_tokens() -> None:
+    """Proveedores tipo "openai" envían max_completion_tokens, no max_tokens.
+
+    Reproduce el fallo de producción: terra (OpenAI gpt-5.6-sol) rechazaba
+    max_tokens con 400 invalid_request_error.
+    """
+    from unittest.mock import patch
+
+    from creative_engine.llm.provider import LLMProvider
+
+    provider = LLMProvider(
+        LLMProviderConfig(
+            name="terra", api_key=SecretStr("k"), type="openai", model="gpt-5.6-sol"
+        )
+    )
+    captured: dict = {}
+
+    class FakeResp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+
+    async def fake_post(url, json=None):
+        captured.update(json or {})
+        return FakeResp()
+
+    try:
+        with patch.object(provider._client, "post", side_effect=fake_post):
+            await provider._call_api.__wrapped__(provider, "hola", max_tokens=123)
+        assert captured.get("max_completion_tokens") == 123
+        assert "max_tokens" not in captured
+    finally:
+        await provider.close()
+
+
+async def test_generic_type_keeps_max_tokens() -> None:
+    """El resto de proveedores (por defecto "generic") siguen usando max_tokens."""
+    from unittest.mock import patch
+
+    from creative_engine.llm.provider import LLMProvider
+
+    provider = LLMProvider(LLMProviderConfig(name="zai", api_key=SecretStr("k")))
+    captured: dict = {}
+
+    class FakeResp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+
+    async def fake_post(url, json=None):
+        captured.update(json or {})
+        return FakeResp()
+
+    try:
+        with patch.object(provider._client, "post", side_effect=fake_post):
+            await provider._call_api.__wrapped__(provider, "hola", max_tokens=456)
+        assert captured.get("max_tokens") == 456
+        assert "max_completion_tokens" not in captured
+    finally:
+        await provider.close()
+
+
+async def test_400_invalid_request_error_raises_specific_exception() -> None:
+    """Un 400 con body invalid_request_error debe distinguirse de otros 400."""
+    from unittest.mock import AsyncMock, patch
+
+    from creative_engine.core.exceptions import LLMInvalidRequestError
+    from creative_engine.llm.provider import LLMProvider
+
+    provider = LLMProvider(
+        LLMProviderConfig(name="terra", api_key=SecretStr("k"), model="gpt-5.6-sol")
+    )
+
+    class FakeResp:
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {
+                "error": {
+                    "message": "Unsupported parameter: 'max_tokens'.",
+                    "type": "invalid_request_error",
+                }
+            }
+
+        text = "invalid_request_error"
+
+    try:
+        with (
+            patch.object(provider._client, "post", AsyncMock(return_value=FakeResp())),
+            pytest.raises(LLMInvalidRequestError),
+        ):
+            await provider._call_api.__wrapped__(provider, "hola")
+    finally:
+        await provider.close()
+
+
+async def test_400_without_invalid_request_type_stays_generic_error() -> None:
+    """Un 400 sin el tipo invalid_request_error no debe activar la rotación especial."""
+    from unittest.mock import AsyncMock, patch
+
+    from creative_engine.core.exceptions import LLMError, LLMInvalidRequestError
+    from creative_engine.llm.provider import LLMProvider
+
+    provider = LLMProvider(LLMProviderConfig(name="zai", api_key=SecretStr("k")))
+
+    class FakeResp:
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {"error": {"message": "algo distinto", "type": "other_error"}}
+
+        text = "other_error"
+
+    try:
+        with patch.object(provider._client, "post", AsyncMock(return_value=FakeResp())):
+            with pytest.raises(LLMError) as exc:
+                await provider._call_api.__wrapped__(provider, "hola")
+            assert not isinstance(exc.value, LLMInvalidRequestError)
+    finally:
+        await provider.close()
+
+
 async def test_glm_thinking_respects_explicit_config() -> None:
     """Si el usuario configura thinking explícitamente, se respeta."""
     from unittest.mock import patch

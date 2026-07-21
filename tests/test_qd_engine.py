@@ -10,6 +10,7 @@ from creative_engine.agents.feasibility import FeasibilityAgent
 from creative_engine.agents.generator import IdeaGeneratorAgent
 from creative_engine.agents.innovation import InnovationAgent
 from creative_engine.agents.market import MarketAgent
+from creative_engine.core.exceptions import LLMError
 from creative_engine.core.models import DomainName, EvolutionRequest
 from creative_engine.evolution.crossover import CrossoverEngine
 from creative_engine.evolution.encoders import IdeaEncoder
@@ -169,3 +170,43 @@ async def test_population_rebuild_after_outage(sim_llm, deterministic_embed) -> 
     assert calls[0] == 6  # intento inicial
     assert 6 in calls[1:], f"esperada reconstrucción con count=6, llamadas: {calls}"
     assert len(state.archive) >= 3  # el run se recuperó de verdad
+    assert state.status == "completed"
+
+
+async def test_run_without_any_idea_ends_in_failed(deterministic_embed) -> None:
+    """Reproduce run_72fde5ac...: si la cadena de proveedores se agota por
+    completo y no se genera ni una idea en todo el run, el motor debe
+    abortar con estado failed en vez de "completar" con el archivo vacío."""
+    from creative_engine.agents.combined_evaluator import CombinedEvaluatorAgent
+
+    always_empty_llm = AsyncMock()
+    always_empty_llm.generate.side_effect = LLMError("Todos los proveedores caídos")
+    always_empty_llm.generate_structured.side_effect = LLMError("Todos los proveedores caídos")
+
+    generator = IdeaGeneratorAgent(always_empty_llm)
+    evaluator = EvaluatorOrchestrator(
+        agents={"combined": CombinedEvaluatorAgent(always_empty_llm)}
+    )
+    engine = QDEngine(
+        generator=generator,
+        evaluator=evaluator,
+        mutation=MutationEngine(always_empty_llm),
+        crossover=CrossoverEngine(always_empty_llm),
+        encoder=IdeaEncoder(embed_fn=deterministic_embed),
+        repository=None,
+    )
+
+    state = await engine.run_evolution(
+        EvolutionRequest(
+            challenge="Movilidad urbana sostenible e innovadora",
+            domain=DomainName.GENERIC,
+            population_size=6,
+            generations=2,
+        )
+    )
+
+    assert state.status == "failed"
+    assert state.error is not None
+    assert state.is_running is False
+    assert state.archive == []
+    assert state.all_ideas == []

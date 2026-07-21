@@ -21,6 +21,10 @@ class LLMProviderConfig(BaseModel):
     api_key: SecretStr = SecretStr("")
     base_url: str | None = None
     model: str = "gpt-4o-mini"
+    # "openai" para la API real de OpenAI (modelos recientes rechazan
+    # `max_tokens` con 400 invalid_request_error; exigen `max_completion_tokens`).
+    # El resto de proveedores compatibles (Gemini, Groq, Z.ai...) usan "generic".
+    type: str = "generic"
     max_tokens: int = 4096
     temperature: float = 0.8
     max_concurrent: int = 5

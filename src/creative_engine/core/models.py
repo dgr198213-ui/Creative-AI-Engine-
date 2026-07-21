@@ -253,6 +253,11 @@ class EvolutionState(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     is_running: bool = False
+    # "running" mientras dure; "failed" si nunca se generó ni una idea
+    # (todos los proveedores LLM fallaron) en vez de "completed" con el
+    # archivo vacío.
+    status: Literal["running", "completed", "failed"] = "running"
+    error: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
