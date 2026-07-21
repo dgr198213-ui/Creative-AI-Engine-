@@ -122,3 +122,50 @@ async def test_full_evolution_cycle(sim_llm, deterministic_embed) -> None:
     # Las élites ocupan celdas distintas → el abanico de ideas es diverso
     cells = {cell.cell_index for cell in state.archive}
     assert len(cells) == len(state.archive)
+
+
+async def test_population_rebuild_after_outage(sim_llm, deterministic_embed) -> None:
+    """Si el archivo queda vacío (apagón de proveedores en la población
+    inicial), la siguiente generación reconstruye la población completa con
+    inyección fresca en vez de gotear 1 idea por generación."""
+    from unittest.mock import patch
+
+    from creative_engine.agents.combined_evaluator import CombinedEvaluatorAgent
+
+    evaluator = EvaluatorOrchestrator(agents={"combined": CombinedEvaluatorAgent(sim_llm)})
+    generator = IdeaGeneratorAgent(sim_llm)
+    engine = QDEngine(
+        generator=generator,
+        evaluator=evaluator,
+        mutation=MutationEngine(sim_llm),
+        crossover=CrossoverEngine(sim_llm),
+        encoder=IdeaEncoder(embed_fn=deterministic_embed),
+        repository=None,
+    )
+
+    # Población inicial fallida (apagón): devuelve 0 ideas
+    original = generator.generate_population
+    calls: list[int] = []
+
+    async def flaky(challenge, domain, count, variation_hint=""):
+        calls.append(count)
+        if len(calls) == 1:
+            return []  # apagón total en la generación 0
+        return await original(
+            challenge=challenge, domain=domain, count=count, variation_hint=variation_hint
+        )
+
+    with patch.object(generator, "generate_population", side_effect=flaky):
+        state = await engine.run_evolution(
+            EvolutionRequest(
+                challenge="Movilidad urbana sostenible e innovadora",
+                domain=DomainName.GENERIC,
+                population_size=6,
+                generations=1,
+            )
+        )
+
+    # La generación 1 pidió la población COMPLETA (6), no el goteo de 1
+    assert calls[0] == 6  # intento inicial
+    assert 6 in calls[1:], f"esperada reconstrucción con count=6, llamadas: {calls}"
+    assert len(state.archive) >= 3  # el run se recuperó de verdad

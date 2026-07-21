@@ -326,6 +326,14 @@ class QDEngine:
         n_crossovers = int(pop_size * cfg.crossover_rate)
         n_random = max(1, int(pop_size * cfg.random_injection_rate))
 
+        # Reconstrucción tras apagón: si el archivo está vacío (p.ej. la
+        # población inicial se perdió por caída simultánea de proveedores),
+        # mutación y cruce no pueden operar — la inyección fresca asume la
+        # población completa para reconstruir, en vez de gotear 1 idea/gen.
+        if occupied == 0:
+            n_random = pop_size
+            self._log.info("population_rebuild", requested=pop_size)
+
         # ── Mutaciones (selección por curiosidad: regiones poco exploradas) ──
         if n_mutations > 0 and occupied > 0:
             parents = archive.select_curious(n_mutations, self._rng)
