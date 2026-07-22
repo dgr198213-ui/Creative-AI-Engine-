@@ -4,7 +4,7 @@
 
 const $ = (id) => document.getElementById(id);
 
-const state = { domain: "generic", running: false };
+const state = { domain: "generic", running: false, profile: null };
 
 // ---- API key opcional (auditoría C1) ----
 // Sin CREATIVE_API_KEY configurada en el servidor, esto no hace nada: las
@@ -77,14 +77,95 @@ challengeEl.addEventListener("keydown", (e) => {
 goBtn.addEventListener("click", start);
 $("again").addEventListener("click", reset);
 
+// ---- Analista Funcional (opcional): espejo de confirmación ----
+// Si CREATIVE_ANALYST_ENABLED está apagado en el servidor, /analyze
+// responde 404 y el flujo sigue siendo directo, como siempre.
+const mirrorConfirmBtn = $("mirrorConfirm");
+const mirrorCorrectBtn = $("mirrorCorrect");
+const correctionBox = $("mirrorCorrection");
+const correctionInput = $("correctionInput");
+
+async function tryAnalyze(challenge, correction, previousProfile) {
+  try {
+    const resp = await apiFetch("/api/v1/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        challenge,
+        correction: correction || undefined,
+        previous_profile: previousProfile || undefined,
+      }),
+    });
+    if (!resp.ok) return null; // 404 (flag off) o 503: degradar a flujo directo
+    return await resp.json(); // { profile, espejo_render }
+  } catch {
+    return null;
+  }
+}
+
+function renderMirrorText(text) {
+  // Marcado ligero del backend (**negrita**) → <strong>, sin más HTML.
+  const escaped = escapeHtml(text);
+  return escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+}
+
+function showMirror(challenge, analyzed, allowCorrection) {
+  state.profile = analyzed.profile;
+  $("mirrorText").innerHTML = renderMirrorText(analyzed.espejo_render);
+  correctionBox.classList.remove("on");
+  correctionInput.value = "";
+  mirrorCorrectBtn.style.display = allowCorrection ? "" : "none";
+  $("mirror").classList.add("on");
+
+  mirrorConfirmBtn.onclick = () => {
+    $("mirror").classList.remove("on");
+    goLive(challenge, state.profile);
+  };
+
+  mirrorCorrectBtn.onclick = () => {
+    if (correctionBox.classList.contains("on")) {
+      const correction = correctionInput.value.trim();
+      if (!correction) return;
+      mirrorCorrectBtn.disabled = true;
+      mirrorCorrectBtn.textContent = "Corrigiendo…";
+      tryAnalyze(challenge, correction, state.profile).then((reanalyzed) => {
+        mirrorCorrectBtn.disabled = false;
+        mirrorCorrectBtn.textContent = "✏️ Corregir algo";
+        if (reanalyzed) {
+          // Un único ciclo de corrección: ya no se puede volver a corregir.
+          showMirror(challenge, reanalyzed, false);
+        } else {
+          goLive(challenge, state.profile);
+        }
+      });
+    } else {
+      correctionBox.classList.add("on");
+      correctionInput.focus();
+    }
+  };
+}
+
 // ---- Transición a estado 2 ----
-function start() {
+async function start() {
   const challenge = challengeEl.value.trim();
   if (challenge.length < 10) return;
+
+  const analyzed = await tryAnalyze(challenge);
+  if (analyzed) {
+    $("ask").style.display = "none";
+    showMirror(challenge, analyzed, true);
+    return;
+  }
+
+  goLive(challenge, null);
+}
+
+function goLive(challenge, profile) {
   state.running = true;
   state.runId = null;
 
   $("ask").style.display = "none";
+  $("mirror").classList.remove("on");
   $("live").classList.add("on");
   $("liveQ").textContent = challenge;
   $("status").textContent = "Preparando…";
@@ -96,17 +177,17 @@ function start() {
   $("err").classList.remove("on");
   window.scrollTo({ top: 0, behavior: "smooth" });
 
-  stream(challenge, state.domain);
+  stream(challenge, state.domain, profile);
 }
 
 // ---- Streaming SSE (vía fetch, para poder enviar POST) ----
-async function stream(challenge, domain) {
+async function stream(challenge, domain, profile) {
   let total = 10;
   try {
     const resp = await apiFetch("/api/v1/evolution/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ challenge, domain }),
+      body: JSON.stringify(profile ? { challenge, domain, profile } : { challenge, domain }),
     });
     if (!resp.ok || !resp.body) throw new Error(`El servidor respondió ${resp.status}`);
 
@@ -320,6 +401,8 @@ function showError(msg) {
 function reset() {
   $("download").hidden = true;
   $("live").classList.remove("on");
+  $("mirror").classList.remove("on");
+  state.profile = null;
   $("ask").style.display = "block";
   challengeEl.value = "";
   goBtn.disabled = true;

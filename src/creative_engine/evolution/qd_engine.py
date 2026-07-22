@@ -113,6 +113,20 @@ class QDEngine:
         if request.custom_weights:
             domain = domain.model_copy(update={"evaluation_weights": request.custom_weights})
 
+        # Perfil del Analista Funcional (opcional): si viene, el motor
+        # genera sobre el reto reformulado, no el texto original, y el
+        # perfil se inyecta como contexto adicional en generator/evaluator.
+        # `state.challenge` conserva el texto tal cual lo escribió el
+        # usuario (trazabilidad); sin perfil, comportamiento idéntico.
+        effective_challenge = (
+            request.profile.reto_reformulado if request.profile else request.challenge
+        )
+        profile_hint = ""
+        if request.profile is not None:
+            from ..analysis.context import profile_context_hint
+
+            profile_hint = profile_context_hint(request.profile)
+
         import structlog.contextvars as _ctx
 
         state_kwargs: dict[str, Any] = {}
@@ -160,22 +174,24 @@ class QDEngine:
         )
 
         context: dict[str, Any] = {
-            "challenge": request.challenge,
+            "challenge": effective_challenge,
             "domain": request.domain,
             "custom_weights": request.custom_weights,
             "run_id": state.run_id,
+            "profile_hint": profile_hint,
         }
 
         try:
             # ── Memoria entre runs: grounding con élites de retos pasados ──
-            memory_hint = await self._cross_run_memory_hint(request.challenge, state.run_id)
+            memory_hint = await self._cross_run_memory_hint(effective_challenge, state.run_id)
 
             # ── Generación 0: población inicial ──
+            initial_hint = " ".join(h for h in (profile_hint, memory_hint) if h)
             initial_ideas = await self._generator.generate_population(
-                challenge=request.challenge,
+                challenge=effective_challenge,
                 domain=domain,
                 count=state.population_size,
-                variation_hint=memory_hint or "",
+                variation_hint=initial_hint,
             )
             for idea in initial_ideas:
                 idea.run_id = state.run_id
