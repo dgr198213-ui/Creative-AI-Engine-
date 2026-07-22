@@ -102,6 +102,43 @@ class IdeaGeneratorAgent:
         self._log.info("population_generated", requested=count, generated=len(all_ideas))
         return all_ideas
 
+    async def refine_population(
+        self, challenge: str, domain: DomainConfig, ideas: list[Idea]
+    ) -> list[Idea]:
+        """Una pasada de auto-mejora sobre ideas ya generadas.
+
+        Usada por el arnés de benchmark (bench/harness.py) para el brazo
+        "prompt único": N ideas + 1 pasada de auto-mejora, equivalente a
+        pedirle a un LLM que revise su propia respuesta una vez. Si el
+        LLM no devuelve un array parseable, se conservan las originales.
+        """
+        if not ideas:
+            return ideas
+
+        summary = "\n".join(f"- {i.title}: {i.description}" for i in ideas)
+        prompt = (
+            f"Generaste estas {len(ideas)} ideas para el reto: {challenge}\n\n"
+            f"{summary}\n\n"
+            "Revísalas: elimina redundancia entre ellas, mejora la "
+            "accionabilidad y la claridad. Responde con el mismo formato "
+            f"de array JSON de {len(ideas)} ideas (título, descripción, "
+            "ventajas, limitaciones, value_hypothesis, features), mejoradas."
+        )
+
+        try:
+            raw = await self._llm.generate(
+                prompt=prompt,
+                system_prompt=domain.system_prompt,
+                temperature=0.5,
+                max_tokens=4096,
+            )
+        except Exception as e:
+            self._log.warning("refine_population_failed", error=str(e))
+            return ideas
+
+        refined = self._parse_batch(raw, domain)
+        return refined if refined else ideas
+
     async def _generate_batch(
         self,
         challenge: str,

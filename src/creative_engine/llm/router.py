@@ -139,6 +139,25 @@ class LLMModelRouter:
         """Devuelve una vista tipo LLMProvider para un rol."""
         return RoledLLM(self, role)
 
+    @property
+    def total_calls(self) -> int:
+        """Llamadas lógicas acumuladas en todos los proveedores del router.
+
+        Usado por el arnés de benchmark (bench/harness.py) para medir el
+        coste de cada brazo por diferencia (antes/después de ejecutarlo).
+        """
+        return sum(p.total_calls for p in self._providers.values())
+
+    @property
+    def total_tokens(self) -> dict[str, int]:
+        """Tokens acumulados (prompt/completion) en todos los proveedores."""
+        return {
+            "prompt_tokens": sum(p.total_prompt_tokens for p in self._providers.values()),
+            "completion_tokens": sum(
+                p.total_completion_tokens for p in self._providers.values()
+            ),
+        }
+
     def _chain_for(self, role: str) -> list[str]:
         return self._routing.get(role, self._default_chain)
 

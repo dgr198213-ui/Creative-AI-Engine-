@@ -96,6 +96,14 @@ class LLMProvider:
         # swap de max_tokens. Ver `_call_api` para la autoadaptación.
         self._unsupported_params: set[str] = set()
 
+        # Contadores de coste (llamadas lógicas y tokens): usados por el
+        # arnés de benchmark (bench/harness.py) para medir el presupuesto
+        # gastado por brazo. Cuentan la llamada final que tuvo éxito, no
+        # los reintentos internos por autoadaptación de parámetros.
+        self.total_calls: int = 0
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+
         # httpx descarta el path de base_url si la petición empieza por "/".
         # Normalizamos: base con barra final + ruta relativa sin barra inicial,
         # para que rutas como .../v1beta/openai/ + chat/completions se preserven
@@ -129,6 +137,7 @@ class LLMProvider:
                 temperature=temperature if temperature is not None else self._config.temperature,
                 max_tokens=max_tokens or self._config.max_tokens,
             )
+            self._record_usage(response)
             return response.content
 
     async def generate_structured(
@@ -154,11 +163,17 @@ class LLMProvider:
                 max_tokens=self._config.max_tokens,
                 response_format=response_format,
             )
+            self._record_usage(response)
             try:
                 return parse_llm_json(response.content)
             except Exception as e:
                 self._log.error("structured_parse_failed", raw=response.content[:300])
                 raise LLMError(f"Respuesta no es JSON válido: {e}") from e
+
+    def _record_usage(self, response: LLMResponse) -> None:
+        self.total_calls += 1
+        self.total_prompt_tokens += response.prompt_tokens
+        self.total_completion_tokens += response.completion_tokens
 
     @retry(
         retry=retry_if_exception_type((LLMRateLimitError, httpx.ConnectError)),

@@ -371,3 +371,69 @@ def doctor(no_llm: bool) -> None:
         console.print()
 
     asyncio.run(_run())
+
+
+@cli.command()
+@click.option(
+    "--set",
+    "set_path",
+    default="configs/bench/vagos.yaml",
+    help="Ruta al YAML del set de retos",
+)
+@click.option("--output", default=None, help="Guardar el informe Markdown en esta ruta")
+@click.option("--no-db", is_flag=True, help="No persistir resultados en PostgreSQL")
+def bench(set_path: str, output: str | None, no_db: bool) -> None:
+    """Benchmark de 3 brazos: prompt único vs motor solo vs motor + Analista."""
+
+    async def _run() -> None:
+        from .bench.config import BenchSetConfig
+        from .bench.harness import run_bench_set
+        from .bench.report import render_markdown
+        from .memory.repository import IdeaRepository
+
+        settings = get_settings()
+        if not settings.llm:
+            console.print("[red]Error: no hay proveedores LLM configurados.[/red]")
+            return
+
+        set_config = BenchSetConfig.from_yaml(set_path)
+        console.print(f"\n[bold cyan]⚖️  Benchmark de 3 brazos — {set_config.name}[/bold cyan]")
+        console.print(
+            f"   {len(set_config.retos)} retos x {set_config.repeticiones} repeticiones "
+            f"· motor {set_config.poblacion_motor}x{set_config.generaciones_motor}\n"
+        )
+
+        results = await run_bench_set(set_config, settings)
+
+        repo: IdeaRepository | None = None
+        if not no_db:
+            repo = IdeaRepository()
+            try:
+                await repo.initialize()
+            except Exception as e:
+                console.print(f"[yellow]PostgreSQL no disponible ({e}); no se persiste.[/yellow]")
+                repo = None
+
+        if repo is not None:
+            try:
+                for r in results:
+                    await repo.save_bench_result(
+                        set_name=set_config.name,
+                        challenge=r.challenge,
+                        reto_tipo=r.reto_tipo,
+                        repetition=r.repetition,
+                        arms={k: v.to_dict() for k, v in r.arms.items()},
+                    )
+            finally:
+                await repo.close()
+
+        report = render_markdown(results, set_config.name)
+        console.print(report)
+
+        if output:
+            from pathlib import Path
+
+            Path(output).write_text(report, encoding="utf-8")
+            console.print(f"\nInforme guardado en {output}")
+
+    asyncio.run(_run())
