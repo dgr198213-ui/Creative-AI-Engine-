@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 184 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 215 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -43,13 +43,17 @@ src/creative_engine/
 │                (enrutado por rol + failover), factory.py
 ├── memory/      repository.py (PostgreSQL), graph.py (Neo4j, opcional),
 │                recommendation
+├── analysis/    analyst.py (Analista Funcional), mirror.py (espejo de
+│                confirmación), context.py (perfil → hint para el motor)
 ├── api/         app.py (FastAPI), auth.py (API key), guardrails.py (rate
 │                limit + tope de presupuesto), routes/ (evolution, stream
-│                SSE, ideas, memory, diagnostics), static/ (panel: index.html
-│                + app.js)
-├── benchmark.py motor QD vs prompt único (la validación de la tesis)
+│                SSE, ideas, memory, diagnostics, analysis), static/
+│                (panel: index.html + app.js)
+├── bench/       arnés de benchmark de 3 brazos (config.py, harness.py,
+│                judge.py, report.py) — ver sección "Analista Funcional"
+├── benchmark.py motor QD vs prompt único, 2 brazos (la validación de la tesis)
 ├── diagnostics.py  doctor: verifica claves/enrutado/BD
-└── main.py      CLI: serve, evolve, benchmark, doctor
+└── main.py      CLI: serve, evolve, benchmark (2 brazos), bench (3 brazos), doctor
 ```
 
 El flujo del motor (`qd_engine._process_batch`): **codificar (local, gratis)
@@ -170,6 +174,58 @@ Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
 - Ante cualquier duda de config: `creative-engine doctor` lo diagnostica en
   segundos. No deducir de logs de runs fallidos.
 
+## Analista Funcional (diseño 22-jul-2026, apagado por defecto)
+
+Convierte un reto vago de un empresario no técnico ("mi tienda no vende")
+en un perfil funcional estructurado ANTES de generar ideas, sin inventar
+datos. Feature flag `CREATIVE_ANALYST_ENABLED` (default `false`): apagado,
+`POST /api/v1/analyze` responde 404 y el motor se comporta exactamente
+igual que sin esta feature — `EvolutionRequest.profile` es `None` siempre
+que el panel no lo active.
+
+**Contrato del perfil** (`ChallengeProfile` en `core/models.py`, es
+también el embrión del futuro "domain pack" — otro dominio, otro
+esquema, mismo motor):
+
+```
+version, reto_original (nunca lo escribe el LLM, lo asigna el agente)
+topografia:          que_ocurre, frecuencia, desde_cuando, donde_ocurre,
+                      intentos_previos
+hipotesis_funcional:  antecedente, mecanismo, refuerzo, confianza (0-1)
+friccion:             impacto_principal, descripcion_impacto, urgencia
+restricciones_duras:  lista libre
+reto_reformulado:     el reto que de verdad recibe el motor
+preguntas_pendientes: máx. 2, solo si confianza < 0.6 (forzado en el
+                      parseo aunque el LLM se equivoque)
+```
+
+**Flujo:** `POST /analyze` (perfil + espejo de confirmación en texto) →
+el panel muestra el espejo con "✅ Es esto" / "✏️ Corregir algo" (máximo
+UN ciclo de corrección, la puerta no es un chat) → `POST /evolution/stream`
+con el `profile` en el body. `QDEngine.run_evolution` genera sobre
+`profile.reto_reformulado` (no `challenge`) e inyecta un resumen del
+perfil (`analysis/context.py`) en el `variation_hint` del generador y en
+el prompt del evaluador combinado. `state.challenge` conserva el texto
+original tal cual lo escribió el usuario (trazabilidad).
+
+**Benchmark de 3 brazos** (`creative-engine bench --set configs/bench/vagos.yaml`):
+A (prompt único + auto-mejora) / B (motor solo) / C (motor + Analista),
+mismo presupuesto aproximado, mismos proveedores. Coste real (llamadas,
+tokens) medido por diferencia de contadores del router
+(`LLMProvider.total_calls/total_prompt_tokens/total_completion_tokens`,
+agregados en `LLMModelRouter.total_calls/total_tokens`) — no se fuerza
+una igualdad exacta, que sería ilusoria entre un prompt único y un motor
+evolutivo; se reporta para que cualquier desigualdad sea auditable.
+
+**Criterio de éxito para que el Analista se quede** (`bench/report.py`):
+1. En retos vagos: C > B en qd_score y utilidad ciega (≥ +15%, señal no ruido).
+2. En retos control (ya bien formulados): C no empeora a B más de un 5%.
+3. B > A en diversidad y utilidad en ambos tipos (valida el motor mismo).
+
+El juez de "utilidad ciega" usa el rol `writer` (no participa en la
+generación/evaluación de ningún brazo) y no sabe de qué brazo viene cada
+propuesta ni cómo se generó.
+
 ## Convenciones
 
 - Python ≥ 3.12, Pydantic v2, tipos everywhere, ruff limpio.
@@ -229,6 +285,12 @@ tiene coste directo, no solo cuota.
 Desplegado y funcionando (4 proveedores con failover por rol, circuito con
 cooldown, puerta de sorpresa, salvage de JSON malformado). El
 ciclo base está validado en producción con runs completos e informes reales.
-Lo siguiente NO es arreglar, es **usar** (retos reales) y **medir** (el modo
-`benchmark` contra prompt único). Solo después, integrar más técnicas del
-roadmap — y siempre con la regla 4 (no multiplicar evaluaciones) en mente.
+El Analista Funcional y el benchmark de 3 brazos están implementados y en
+verde en tests, pero **apagados en producción** (`CREATIVE_ANALYST_ENABLED=false`).
+Siguiente paso real: correr `creative-engine bench --set configs/bench/vagos.yaml`
+contra proveedores reales y decidir con los 3 criterios de éxito si el
+Analista se activa por defecto o se descarta — no activarlo "porque sí"
+sin ese dato. En paralelo, seguir con lo de siempre: **usar** (retos
+reales) y **medir** (el modo `benchmark` de 2 brazos). Solo después,
+integrar más técnicas del roadmap — y siempre con la regla 4 (no
+multiplicar evaluaciones) en mente.
