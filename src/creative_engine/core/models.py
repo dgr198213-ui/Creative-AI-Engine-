@@ -331,6 +331,67 @@ class DomainConfig(BaseModel):
         return result
 
 
+# ── Perfil funcional del reto (Analista) ────────────────────────────
+#
+# Contrato JSON estable producido por el Analista Funcional (diseño
+# 22-jul-2026 §1): convierte un reto vago ("mi tienda no vende") en un
+# perfil estructurado que generator/evaluator usan como contexto. Es
+# también el embrión del futuro "domain pack": otro dominio, otro
+# esquema de perfil, mismo motor.
+
+
+class ChallengeTopography(BaseModel):
+    """Qué observa el usuario, sin interpretar aún."""
+
+    que_ocurre: str = ""
+    frecuencia: Literal["puntual", "recurrente", "constante", "desconocida"] = (
+        "desconocida"
+    )
+    desde_cuando: str | None = None
+    donde_ocurre: str = ""
+    intentos_previos: list[str] = Field(default_factory=list)
+
+
+class FunctionalHypothesis(BaseModel):
+    """Hipótesis de la causa de fondo — hipótesis, no certeza."""
+
+    antecedente: str = ""
+    mecanismo: str = ""
+    refuerzo: str = ""
+    confianza: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class ChallengeFriction(BaseModel):
+    """Impacto real del problema en el negocio del usuario."""
+
+    impacto_principal: Literal[
+        "dinero", "tiempo", "clientes", "equipo", "reputación"
+    ] = "dinero"
+    descripcion_impacto: str = ""
+    urgencia: Literal["baja", "media", "alta"] = "media"
+
+
+class ChallengeProfile(BaseModel):
+    """Perfil funcional de un reto, producido por el Analista Funcional.
+
+    `reto_original` nunca lo escribe el LLM: lo asigna el agente a partir
+    del texto literal del usuario, para que quede garantizado sin tocar.
+    Cuando `hipotesis_funcional.confianza < 0.6`, `preguntas_pendientes`
+    (máx. 2) se muestran en el espejo de confirmación antes de lanzar el run.
+    """
+
+    version: int = 1
+    reto_original: str = ""
+    topografia: ChallengeTopography = Field(default_factory=ChallengeTopography)
+    hipotesis_funcional: FunctionalHypothesis = Field(
+        default_factory=FunctionalHypothesis
+    )
+    friccion: ChallengeFriction = Field(default_factory=ChallengeFriction)
+    restricciones_duras: list[str] = Field(default_factory=list)
+    reto_reformulado: str = ""
+    preguntas_pendientes: list[str] = Field(default_factory=list, max_length=2)
+
+
 # ── Solicitudes y Respuestas API ────────────────────────────────────
 
 
@@ -345,6 +406,11 @@ class EvolutionRequest(BaseModel):
     population_size: int | None = Field(default=None, ge=4, le=500)
     generations: int | None = Field(default=None, ge=1, le=200)
     custom_weights: dict[str, float] | None = None
+    # Perfil del Analista Funcional (opcional, flag CREATIVE_ANALYST_ENABLED):
+    # si viene, el motor genera sobre `profile.reto_reformulado` en vez de
+    # `challenge` tal cual, e inyecta el perfil como contexto adicional.
+    # Sin él, comportamiento idéntico al de siempre.
+    profile: ChallengeProfile | None = None
 
 
 class EvolutionResponse(BaseModel):

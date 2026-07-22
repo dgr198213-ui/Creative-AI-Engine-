@@ -43,7 +43,9 @@ from .provider import LLMProvider
 logger = structlog.get_logger(__name__)
 
 # Roles que el motor puede solicitar. Cualquier otro cae a la cadena default.
-KNOWN_ROLES = ("generator", "evaluator", "writer")
+# "analyst": Analista Funcional (perfila el reto antes de generar ideas) —
+# recomendado un razonador primero (p.ej. CREATIVE_ROUTING_SPEC=analyst=luna,default,zai).
+KNOWN_ROLES = ("generator", "evaluator", "writer", "analyst")
 
 
 class RoledLLM:

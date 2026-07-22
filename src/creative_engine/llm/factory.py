@@ -30,4 +30,5 @@ def role_llms(router: LLMModelRouter) -> dict[str, RoledLLM]:
         "generator": router.for_role("generator"),
         "evaluator": router.for_role("evaluator"),
         "writer": router.for_role("writer"),
+        "analyst": router.for_role("analyst"),
     }
