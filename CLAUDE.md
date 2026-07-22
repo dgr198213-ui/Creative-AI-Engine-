@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 177 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 184 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -134,20 +134,39 @@ Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
   lo detectara**: todo el diagnóstico del primer incidente se centró en
   terra. Causa raíz única: la elección de parámetro dependía enteramente
   de que un humano configurase bien una env var por proveedor — frágil
-  por construcción. Fix: `LLMProvider` ahora **autoadapta** el parámetro:
-  si recibe el 400 de "usa max_completion_tokens" (o al revés), cambia el
-  flag, reintenta la misma petición una vez y recuerda la elección de por
-  vida del provider (log `token_param_auto_adapted`). Un proveedor OpenAI
-  sin `TYPE` ya no se deshabilita todo el run — paga un 400+reintento
-  (~1s, gratis) solo en su primera llamada. Configurar `TYPE=openai` sigue
-  siendo mejor (evita ese primer 400), pero ya no es obligatorio para que
-  el proveedor funcione.
+  por construcción. Fix: `LLMProvider` ahora **autoadapta** el parámetro
+  de tokens: si recibe el 400 de "usa max_completion_tokens" (o al revés),
+  cambia el flag, reintenta la misma petición una vez y recuerda la
+  elección de por vida del provider (log `token_param_auto_adapted`). Un
+  proveedor OpenAI sin `TYPE` ya no se deshabilita todo el run — paga un
+  400+reintento (~1s, gratis) solo en su primera llamada. Configurar
+  `TYPE=openai` sigue siendo mejor (evita ese primer 400), pero ya no es
+  obligatorio para que el proveedor funcione.
+- **La autoadaptación se generalizó a cualquier parámetro, no solo tokens
+  (mismo incidente, tercera vuelta).** Terra volvió a caer con "400
+  Unsupported value: 'temperature' does not support 0.9": la familia
+  gpt-5.6 solo acepta `temperature=1`. El patrón (un parámetro que un
+  modelo concreto no soporta, detectado por texto del error, corregible
+  quitándolo del payload) es el mismo que el de `max_tokens` — así que en
+  vez de parchear parámetro a parámetro, `LLMProvider` ahora reconoce
+  cualquier 400 "Unsupported parameter/value: 'X'", quita `X` del payload,
+  lo recuerda (`self._unsupported_params`) y reintenta (log
+  `param_auto_dropped`). Tope de 3 parámetros distintos por llamada, nunca
+  el mismo dos veces, para no reintentar sin fin ante un proveedor
+  patológico. `max_tokens`/`max_completion_tokens` quedan fuera de este
+  mecanismo genérico: su fix es sustitución (uno por otro), no eliminación.
+  **Caso especial de `temperature`:** eliminarla del payload sin más
+  perdería la palanca de diversidad que usan mutación/cruce (temperaturas
+  altas = más riesgo). Se traduce a una instrucción en el system prompt
+  (`t<0.4` → conservador, `t>0.8` → arriesgar, rango medio → nada) para que
+  el efecto sobrevida aunque el modelo ignore el parámetro numérico.
 - **Un 400 invalid_request_error deshabilita el proveedor para el resto del
   run** (`provider_disabled_for_run`) y rota al siguiente: no se arregla
-  reintentando. Esto sigue aplicando a cualquier 400 que NO sea el de
-  parámetro de tokens (esos ya se autoadaptan primero). Un run que agota
-  la cadena con población vacía aborta con estado `failed`
-  (`evolution_aborted_empty_population`), nunca completa vacío.
+  reintentando. Esto sigue aplicando a cualquier 400 que la autoadaptación
+  no pueda resolver (parámetro fuera del payload, ya intentado, o tope de
+  3 agotado). Un run que agota la cadena con población vacía aborta con
+  estado `failed` (`evolution_aborted_empty_population`), nunca completa
+  vacío.
 - Ante cualquier duda de config: `creative-engine doctor` lo diagnostica en
   segundos. No deducir de logs de runs fallidos.
 
