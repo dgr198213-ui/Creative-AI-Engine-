@@ -6,6 +6,7 @@ Soporta cualquier API OpenAI-compatible (OpenAI, DeepSeek, Qwen, Ollama...).
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,35 @@ from ..core.exceptions import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# Parámetros con manejo especial (sustitución, no eliminación genérica):
+# max_tokens/max_completion_tokens tienen su propio swap en _call_api.
+_SPECIAL_PARAMS = frozenset({"max_tokens", "max_completion_tokens"})
+
+# Mensajes reales de OpenAI para un parámetro/valor no soportado por el
+# modelo, p.ej. "Unsupported parameter: 'max_tokens' is not supported..."
+# o "Unsupported value: 'temperature' does not support 0.9...". Captura el
+# nombre del parámetro entre comillas simples.
+_UNSUPPORTED_PARAM_RE = re.compile(r"Unsupported (?:parameter|value): '([^']+)'")
+
+
+def _temperature_style_hint(temperature: float) -> str:
+    """Traduce la temperatura a instrucción de prompt.
+
+    Para modelos "razonadores" que ignoran/rechazan `temperature` (p.ej. la
+    familia gpt-5.6, que solo acepta 1), la palanca de diversidad que usan
+    los operadores de mutación del QDEngine (temperaturas altas = más
+    riesgo, bajas = más conservador) se pierde. Esto la recupera como
+    instrucción explícita en el prompt.
+    """
+    if temperature < 0.4:
+        return "Sé riguroso y conservador; prioriza solidez sobre originalidad."
+    if temperature > 0.8:
+        return (
+            "Arriesga: prioriza enfoques inusuales y exploratorios "
+            "aunque sean menos seguros."
+        )
+    return ""
 
 
 @dataclass
@@ -58,6 +88,13 @@ class LLMProvider:
         # proveedor OpenAI sin TYPE configurado se corrige solo en la primera
         # llamada en vez de quedar deshabilitado todo el run.
         self._use_max_completion_tokens: bool = config.type == "openai"
+
+        # Parámetros que este proveedor ha rechazado alguna vez (400
+        # "Unsupported parameter/value") y que ya no se envían más: p.ej.
+        # `temperature` en la familia gpt-5.6, que solo acepta el valor 1.
+        # Persiste para el resto de la vida del provider, igual que el
+        # swap de max_tokens. Ver `_call_api` para la autoadaptación.
+        self._unsupported_params: set[str] = set()
 
         # httpx descarta el path de base_url si la petición empieza por "/".
         # Normalizamos: base con barra final + ruta relativa sin barra inicial,
@@ -139,13 +176,29 @@ class LLMProvider:
         max_tokens: int = 4096,
         response_format: dict[str, Any] | None = None,
         _token_param_retry: bool = False,
+        _dropped_params_this_call: frozenset[str] = frozenset(),
     ) -> LLMResponse:
         """Llamada real a la API con retry."""
         start = time.perf_counter()
 
+        # Si `temperature` quedó marcada como no soportada (modelos
+        # razonadores como gpt-5.6, que solo aceptan el valor 1), la
+        # palanca de diversidad se traduce a una instrucción de prompt en
+        # vez de perderse: mutación/cruce siguen pudiendo pedir más o
+        # menos riesgo aunque el proveedor ignore el parámetro numérico.
+        effective_system_prompt = system_prompt
+        if "temperature" in self._unsupported_params:
+            hint = _temperature_style_hint(temperature)
+            if hint:
+                effective_system_prompt = (
+                    f"{effective_system_prompt}\n\n{hint}"
+                    if effective_system_prompt
+                    else hint
+                )
+
         messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+        if effective_system_prompt:
+            messages.append({"role": "system", "content": effective_system_prompt})
         messages.append({"role": "user", "content": prompt})
 
         payload: dict[str, Any] = {
@@ -175,6 +228,12 @@ class LLMProvider:
             and "thinking" not in payload
         ):
             payload["thinking"] = {"type": "disabled"}
+
+        # Parámetros ya rechazados por este proveedor en llamadas previas
+        # (o antes en esta misma cadena de reintentos): fuera del payload,
+        # ni siquiera se intentan de nuevo.
+        for dropped in self._unsupported_params:
+            payload.pop(dropped, None)
 
         try:
             resp = await self._client.post("chat/completions", json=payload)
@@ -258,7 +317,41 @@ class LLMProvider:
                         max_tokens=max_tokens,
                         response_format=response_format,
                         _token_param_retry=True,
+                        _dropped_params_this_call=_dropped_params_this_call,
                     )
+
+                # Autoadaptación genérica: cualquier otro parámetro que el
+                # modelo rechace (p.ej. `temperature` en gpt-5.6, que solo
+                # acepta 1) se elimina del payload en vez de tumbar el
+                # proveedor. max_tokens/max_completion_tokens quedan fuera:
+                # esos se sustituyen (arriba), nunca se eliminan. Tope de 3
+                # parámetros distintos por llamada — un proveedor patológico
+                # que rechace todo no reintenta indefinidamente.
+                match = _UNSUPPORTED_PARAM_RE.search(err_msg)
+                param = match.group(1) if match else None
+                if (
+                    param
+                    and param in payload
+                    and param not in _SPECIAL_PARAMS
+                    and param not in _dropped_params_this_call
+                    and len(_dropped_params_this_call) < 3
+                ):
+                    self._unsupported_params.add(param)
+                    self._log.warning(
+                        "param_auto_dropped",
+                        provider=self._config.name,
+                        param=param,
+                    )
+                    return await self._call_api(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format=response_format,
+                        _token_param_retry=_token_param_retry,
+                        _dropped_params_this_call=_dropped_params_this_call | {param},
+                    )
+
                 raise LLMInvalidRequestError(
                     f"Petición inválida en {self._config.name} "
                     f"(400 invalid_request_error): "
