@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     # exige la cabecera X-API-Key — pensado para el momento en que la API
     # queda expuesta a internet (Railway) sin nada más delante.
     api_key: str = ""
+    # Feature flag del Analista Funcional (diseño 22-jul-2026): por defecto
+    # apagado — el flujo actual (reto → motor directo) no se toca. Con esto
+    # en false, POST /api/v1/analyze responde 404.
+    analyst_enabled: bool = False
 
     llm: dict[str, LLMProviderConfig] = Field(default_factory=dict)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)

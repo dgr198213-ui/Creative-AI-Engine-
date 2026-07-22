@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 129 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 215 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -41,12 +41,19 @@ src/creative_engine/
 │                evaluator_orchestrator, writer, critic, base
 ├── llm/         provider.py (cliente OpenAI-compatible), router.py
 │                (enrutado por rol + failover), factory.py
-├── memory/      repository.py (PostgreSQL), graph.py (Neo4j), recommendation
-├── api/         app.py (FastAPI), routes/ (evolution, stream SSE, ideas,
-│                memory, diagnostics), static/ (panel: index.html + app.js)
-├── benchmark.py motor QD vs prompt único (la validación de la tesis)
+├── memory/      repository.py (PostgreSQL), graph.py (Neo4j, opcional),
+│                recommendation
+├── analysis/    analyst.py (Analista Funcional), mirror.py (espejo de
+│                confirmación), context.py (perfil → hint para el motor)
+├── api/         app.py (FastAPI), auth.py (API key), guardrails.py (rate
+│                limit + tope de presupuesto), routes/ (evolution, stream
+│                SSE, ideas, memory, diagnostics, analysis), static/
+│                (panel: index.html + app.js)
+├── bench/       arnés de benchmark de 3 brazos (config.py, harness.py,
+│                judge.py, report.py) — ver sección "Analista Funcional"
+├── benchmark.py motor QD vs prompt único, 2 brazos (la validación de la tesis)
 ├── diagnostics.py  doctor: verifica claves/enrutado/BD
-└── main.py      CLI: serve, evolve, benchmark, doctor
+└── main.py      CLI: serve, evolve, benchmark (2 brazos), bench (3 brazos), doctor
 ```
 
 El flujo del motor (`qd_engine._process_batch`): **codificar (local, gratis)
@@ -77,7 +84,10 @@ Estas decisiones son deliberadas. Cambiarlas exige una razón muy buena:
 
 4. **La evaluación LLM es el cuello de botella.** Cualquier cambio que
    multiplique las llamadas de evaluación (p.ej. Evo-MCTS) está casi siempre
-   descartado: operamos en free tiers. Preferir señales locales (embeddings).
+   descartado. Ya no operamos solo en free tiers — **terra factura dinero
+   real** (ver inventario de proveedores) — así que esta regla ahora protege
+   tanto cuota gratuita como coste directo. Preferir señales locales
+   (embeddings).
 
 5. **El motor no conoce la capa de transporte.** El SSE se implementa con un
    callback `on_generation` opcional; los agentes reciben un objeto con
@@ -93,7 +103,12 @@ Estas decisiones son deliberadas. Cambiarlas exige una razón muy buena:
 Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
 
 - Un proveedor se define con `CREATIVE_LLM__<NOMBRE>__*` (NAME, API_KEY,
-  BASE_URL, MODEL, MAX_CONCURRENT, MIN_INTERVAL_SECONDS, EXTRA_BODY).
+  BASE_URL, MODEL, TYPE, MAX_CONCURRENT, MIN_INTERVAL_SECONDS, EXTRA_BODY).
+- `TYPE=openai` para la API real de OpenAI activa `max_completion_tokens`
+  en el payload directamente, sin coste de una llamada extra. **Ya no es
+  un requisito, es una optimización**: el provider autoadapta el
+  parámetro solo si `TYPE` falta o llega mal (ver lección de abajo),
+  pero configurarlo bien evita ese primer 400 en cada arranque.
 - El enrutado por rol: `CREATIVE_ROUTING_SPEC=generator=a,b;evaluator=b,a;writer=a`.
   Con varios proveedores y sin spec, la cadena por defecto los usa todos en
   orden (failover automático).
@@ -113,8 +128,103 @@ Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
   `gemini-flash-latest`, no versiones fijas que Google retira.
 - **401 = clave mal copiada**, casi siempre (espacios, comillas). El failover
   ante 401 evita que tumbe el run, pero conviene arreglar la clave.
+- **OpenAI real rechaza `max_tokens` en modelos recientes** (400
+  invalid_request_error): exige `max_completion_tokens`. Incidente
+  21-jul-2026: terra sin `TYPE` → 12 batches fallidos, run con 0 élites.
+- **La config `TYPE` es una pista, no un requisito (incidente 22-jul-2026,
+  segunda noche).** Terra siguió en 400 pese a tener `TYPE=openai` puesto
+  (la variable no llegaba al contenedor — comillas/espacios/environment
+  equivocado) y **luna tenía exactamente el mismo problema sin que nadie
+  lo detectara**: todo el diagnóstico del primer incidente se centró en
+  terra. Causa raíz única: la elección de parámetro dependía enteramente
+  de que un humano configurase bien una env var por proveedor — frágil
+  por construcción. Fix: `LLMProvider` ahora **autoadapta** el parámetro
+  de tokens: si recibe el 400 de "usa max_completion_tokens" (o al revés),
+  cambia el flag, reintenta la misma petición una vez y recuerda la
+  elección de por vida del provider (log `token_param_auto_adapted`). Un
+  proveedor OpenAI sin `TYPE` ya no se deshabilita todo el run — paga un
+  400+reintento (~1s, gratis) solo en su primera llamada. Configurar
+  `TYPE=openai` sigue siendo mejor (evita ese primer 400), pero ya no es
+  obligatorio para que el proveedor funcione.
+- **La autoadaptación se generalizó a cualquier parámetro, no solo tokens
+  (mismo incidente, tercera vuelta).** Terra volvió a caer con "400
+  Unsupported value: 'temperature' does not support 0.9": la familia
+  gpt-5.6 solo acepta `temperature=1`. El patrón (un parámetro que un
+  modelo concreto no soporta, detectado por texto del error, corregible
+  quitándolo del payload) es el mismo que el de `max_tokens` — así que en
+  vez de parchear parámetro a parámetro, `LLMProvider` ahora reconoce
+  cualquier 400 "Unsupported parameter/value: 'X'", quita `X` del payload,
+  lo recuerda (`self._unsupported_params`) y reintenta (log
+  `param_auto_dropped`). Tope de 3 parámetros distintos por llamada, nunca
+  el mismo dos veces, para no reintentar sin fin ante un proveedor
+  patológico. `max_tokens`/`max_completion_tokens` quedan fuera de este
+  mecanismo genérico: su fix es sustitución (uno por otro), no eliminación.
+  **Caso especial de `temperature`:** eliminarla del payload sin más
+  perdería la palanca de diversidad que usan mutación/cruce (temperaturas
+  altas = más riesgo). Se traduce a una instrucción en el system prompt
+  (`t<0.4` → conservador, `t>0.8` → arriesgar, rango medio → nada) para que
+  el efecto sobrevida aunque el modelo ignore el parámetro numérico.
+- **Un 400 invalid_request_error deshabilita el proveedor para el resto del
+  run** (`provider_disabled_for_run`) y rota al siguiente: no se arregla
+  reintentando. Esto sigue aplicando a cualquier 400 que la autoadaptación
+  no pueda resolver (parámetro fuera del payload, ya intentado, o tope de
+  3 agotado). Un run que agota la cadena con población vacía aborta con
+  estado `failed` (`evolution_aborted_empty_population`), nunca completa
+  vacío.
 - Ante cualquier duda de config: `creative-engine doctor` lo diagnostica en
   segundos. No deducir de logs de runs fallidos.
+
+## Analista Funcional (diseño 22-jul-2026, apagado por defecto)
+
+Convierte un reto vago de un empresario no técnico ("mi tienda no vende")
+en un perfil funcional estructurado ANTES de generar ideas, sin inventar
+datos. Feature flag `CREATIVE_ANALYST_ENABLED` (default `false`): apagado,
+`POST /api/v1/analyze` responde 404 y el motor se comporta exactamente
+igual que sin esta feature — `EvolutionRequest.profile` es `None` siempre
+que el panel no lo active.
+
+**Contrato del perfil** (`ChallengeProfile` en `core/models.py`, es
+también el embrión del futuro "domain pack" — otro dominio, otro
+esquema, mismo motor):
+
+```
+version, reto_original (nunca lo escribe el LLM, lo asigna el agente)
+topografia:          que_ocurre, frecuencia, desde_cuando, donde_ocurre,
+                      intentos_previos
+hipotesis_funcional:  antecedente, mecanismo, refuerzo, confianza (0-1)
+friccion:             impacto_principal, descripcion_impacto, urgencia
+restricciones_duras:  lista libre
+reto_reformulado:     el reto que de verdad recibe el motor
+preguntas_pendientes: máx. 2, solo si confianza < 0.6 (forzado en el
+                      parseo aunque el LLM se equivoque)
+```
+
+**Flujo:** `POST /analyze` (perfil + espejo de confirmación en texto) →
+el panel muestra el espejo con "✅ Es esto" / "✏️ Corregir algo" (máximo
+UN ciclo de corrección, la puerta no es un chat) → `POST /evolution/stream`
+con el `profile` en el body. `QDEngine.run_evolution` genera sobre
+`profile.reto_reformulado` (no `challenge`) e inyecta un resumen del
+perfil (`analysis/context.py`) en el `variation_hint` del generador y en
+el prompt del evaluador combinado. `state.challenge` conserva el texto
+original tal cual lo escribió el usuario (trazabilidad).
+
+**Benchmark de 3 brazos** (`creative-engine bench --set configs/bench/vagos.yaml`):
+A (prompt único + auto-mejora) / B (motor solo) / C (motor + Analista),
+mismo presupuesto aproximado, mismos proveedores. Coste real (llamadas,
+tokens) medido por diferencia de contadores del router
+(`LLMProvider.total_calls/total_prompt_tokens/total_completion_tokens`,
+agregados en `LLMModelRouter.total_calls/total_tokens`) — no se fuerza
+una igualdad exacta, que sería ilusoria entre un prompt único y un motor
+evolutivo; se reporta para que cualquier desigualdad sea auditable.
+
+**Criterio de éxito para que el Analista se quede** (`bench/report.py`):
+1. En retos vagos: C > B en qd_score y utilidad ciega (≥ +15%, señal no ruido).
+2. En retos control (ya bien formulados): C no empeora a B más de un 5%.
+3. B > A en diversidad y utilidad en ambos tipos (valida el motor mismo).
+
+El juez de "utilidad ciega" usa el rol `writer` (no participa en la
+generación/evaluación de ningún brazo) y no sabe de qué brazo viene cada
+propuesta ni cómo se generó.
 
 ## Convenciones
 
@@ -136,10 +246,51 @@ node --check src/creative_engine/api/static/app.js   # si tocaste el panel
 Para cambios en el ciclo evolutivo, además un mini-run con LLM simulado que
 confirme que produce élites y no rompe el primer run (archivo vacío).
 
+## Inventario de proveedores en producción (Railway)
+
+MANTENER AL DÍA: toda sesión que añada, retire o modifique un proveedor o
+el routing DEBE actualizar esta tabla y las lecciones de arriba en el mismo
+commit. Las sesiones no comparten contexto entre sí; este archivo es el
+punto de sincronización.
+
+| Nombre    | Servicio        | Modelo             | TYPE   | Coste     |
+|-----------|-----------------|--------------------|--------|-----------|
+| `default` | Gemini (OpenAI-compat) | gemini-flash-latest | —  | Free tier |
+| `zai`     | Z.ai            | glm (flash)        | —      | Free tier |
+| `terra`   | OpenAI (real)   | gpt-5.6-sol        | openai | DE PAGO   |
+| `luna`    | OpenAI (real) — confirmado 22-jul | **sin confirmar** modelo exacto | openai | **sin confirmar** — verificar si es de pago |
+
+**Nota sobre `luna` (actualizado 22-jul-2026):** la auditoría del incidente
+de la segunda noche (P1) confirma que `luna` es OpenAI real: falla con el
+mismo 400 `invalid_request_error` exacto que `terra` ("Unsupported
+parameter: 'max_tokens' ... Use 'max_completion_tokens' instead"), y con
+la autoadaptación del provider ya funciona sin depender de `TYPE`. Queda
+pendiente confirmar el **modelo exacto** y si **factura dinero real** como
+terra — verificar con `railway variables | grep LUNA` y rellenar antes de
+tocar de nuevo el routing. Tampoco está de más poner `CREATIVE_LLM__LUNA__TYPE=openai`
+explícitamente: con la autoadaptación ya no es obligatorio, pero evita el
+400 inicial en cada arranque.
+
+Routing actual: `generator=terra,luna,default,zai`;
+`evaluator=luna,terra,default,zai`; `writer=terra,default`.
+**Pendiente operativo:** el writer no tiene fallback gratuito
+(`terra,default` — si terra cae y Gemini está saturado, el writer se
+queda sin proveedor). Cambiar a `writer=terra,default,zai` en Railway.
+OJO: `terra` factura dinero real (y probablemente `luna` también, a
+confirmar). Cualquier cambio que multiplique llamadas del generator/writer
+tiene coste directo, no solo cuota.
+
 ## Estado y siguiente paso
 
-Desplegado y funcionando (Gemini + Z.ai, failover, puerta de sorpresa). El
+Desplegado y funcionando (4 proveedores con failover por rol, circuito con
+cooldown, puerta de sorpresa, salvage de JSON malformado). El
 ciclo base está validado en producción con runs completos e informes reales.
-Lo siguiente NO es arreglar, es **usar** (retos reales) y **medir** (el modo
-`benchmark` contra prompt único). Solo después, integrar más técnicas del
-roadmap — y siempre con la regla 4 (no multiplicar evaluaciones) en mente.
+El Analista Funcional y el benchmark de 3 brazos están implementados y en
+verde en tests, pero **apagados en producción** (`CREATIVE_ANALYST_ENABLED=false`).
+Siguiente paso real: correr `creative-engine bench --set configs/bench/vagos.yaml`
+contra proveedores reales y decidir con los 3 criterios de éxito si el
+Analista se activa por defecto o se descarta — no activarlo "porque sí"
+sin ese dato. En paralelo, seguir con lo de siempre: **usar** (retos
+reales) y **medir** (el modo `benchmark` de 2 brazos). Solo después,
+integrar más técnicas del roadmap — y siempre con la regla 4 (no
+multiplicar evaluaciones) en mente.

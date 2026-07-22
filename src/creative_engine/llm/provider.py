@@ -6,6 +6,7 @@ Soporta cualquier API OpenAI-compatible (OpenAI, DeepSeek, Qwen, Ollama...).
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -29,6 +30,35 @@ from ..core.exceptions import (
 
 logger = structlog.get_logger(__name__)
 
+# Parámetros con manejo especial (sustitución, no eliminación genérica):
+# max_tokens/max_completion_tokens tienen su propio swap en _call_api.
+_SPECIAL_PARAMS = frozenset({"max_tokens", "max_completion_tokens"})
+
+# Mensajes reales de OpenAI para un parámetro/valor no soportado por el
+# modelo, p.ej. "Unsupported parameter: 'max_tokens' is not supported..."
+# o "Unsupported value: 'temperature' does not support 0.9...". Captura el
+# nombre del parámetro entre comillas simples.
+_UNSUPPORTED_PARAM_RE = re.compile(r"Unsupported (?:parameter|value): '([^']+)'")
+
+
+def _temperature_style_hint(temperature: float) -> str:
+    """Traduce la temperatura a instrucción de prompt.
+
+    Para modelos "razonadores" que ignoran/rechazan `temperature` (p.ej. la
+    familia gpt-5.6, que solo acepta 1), la palanca de diversidad que usan
+    los operadores de mutación del QDEngine (temperaturas altas = más
+    riesgo, bajas = más conservador) se pierde. Esto la recupera como
+    instrucción explícita en el prompt.
+    """
+    if temperature < 0.4:
+        return "Sé riguroso y conservador; prioriza solidez sobre originalidad."
+    if temperature > 0.8:
+        return (
+            "Arriesga: prioriza enfoques inusuales y exploratorios "
+            "aunque sean menos seguros."
+        )
+    return ""
+
 
 @dataclass
 class LLMResponse:
@@ -50,6 +80,29 @@ class LLMProvider:
         self._semaphore = asyncio.Semaphore(config.max_concurrent)
         self._last_request_time: float = 0.0
         self._min_interval = config.min_interval_seconds
+        # Qué parámetro de límite de tokens acepta este proveedor. La API real
+        # de OpenAI exige `max_completion_tokens`; los compatibles (Gemini,
+        # Z.ai...) usan `max_tokens`. `type=openai` en la config es solo la
+        # pista inicial: si el proveedor rechaza el parámetro con un 400, nos
+        # autoadaptamos y recordamos la elección (ver _call_api). Así un
+        # proveedor OpenAI sin TYPE configurado se corrige solo en la primera
+        # llamada en vez de quedar deshabilitado todo el run.
+        self._use_max_completion_tokens: bool = config.type == "openai"
+
+        # Parámetros que este proveedor ha rechazado alguna vez (400
+        # "Unsupported parameter/value") y que ya no se envían más: p.ej.
+        # `temperature` en la familia gpt-5.6, que solo acepta el valor 1.
+        # Persiste para el resto de la vida del provider, igual que el
+        # swap de max_tokens. Ver `_call_api` para la autoadaptación.
+        self._unsupported_params: set[str] = set()
+
+        # Contadores de coste (llamadas lógicas y tokens): usados por el
+        # arnés de benchmark (bench/harness.py) para medir el presupuesto
+        # gastado por brazo. Cuentan la llamada final que tuvo éxito, no
+        # los reintentos internos por autoadaptación de parámetros.
+        self.total_calls: int = 0
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
 
         # httpx descarta el path de base_url si la petición empieza por "/".
         # Normalizamos: base con barra final + ruta relativa sin barra inicial,
@@ -84,6 +137,7 @@ class LLMProvider:
                 temperature=temperature if temperature is not None else self._config.temperature,
                 max_tokens=max_tokens or self._config.max_tokens,
             )
+            self._record_usage(response)
             return response.content
 
     async def generate_structured(
@@ -109,11 +163,17 @@ class LLMProvider:
                 max_tokens=self._config.max_tokens,
                 response_format=response_format,
             )
+            self._record_usage(response)
             try:
                 return parse_llm_json(response.content)
             except Exception as e:
                 self._log.error("structured_parse_failed", raw=response.content[:300])
                 raise LLMError(f"Respuesta no es JSON válido: {e}") from e
+
+    def _record_usage(self, response: LLMResponse) -> None:
+        self.total_calls += 1
+        self.total_prompt_tokens += response.prompt_tokens
+        self.total_completion_tokens += response.completion_tokens
 
     @retry(
         retry=retry_if_exception_type((LLMRateLimitError, httpx.ConnectError)),
@@ -130,13 +190,30 @@ class LLMProvider:
         temperature: float = 0.8,
         max_tokens: int = 4096,
         response_format: dict[str, Any] | None = None,
+        _token_param_retry: bool = False,
+        _dropped_params_this_call: frozenset[str] = frozenset(),
     ) -> LLMResponse:
         """Llamada real a la API con retry."""
         start = time.perf_counter()
 
+        # Si `temperature` quedó marcada como no soportada (modelos
+        # razonadores como gpt-5.6, que solo aceptan el valor 1), la
+        # palanca de diversidad se traduce a una instrucción de prompt en
+        # vez de perderse: mutación/cruce siguen pudiendo pedir más o
+        # menos riesgo aunque el proveedor ignore el parámetro numérico.
+        effective_system_prompt = system_prompt
+        if "temperature" in self._unsupported_params:
+            hint = _temperature_style_hint(temperature)
+            if hint:
+                effective_system_prompt = (
+                    f"{effective_system_prompt}\n\n{hint}"
+                    if effective_system_prompt
+                    else hint
+                )
+
         messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+        if effective_system_prompt:
+            messages.append({"role": "system", "content": effective_system_prompt})
         messages.append({"role": "user", "content": prompt})
 
         payload: dict[str, Any] = {
@@ -147,7 +224,8 @@ class LLMProvider:
         # La API real de OpenAI rechaza `max_tokens` en modelos recientes
         # (400 invalid_request_error) y exige `max_completion_tokens`. El
         # resto de proveedores compatibles siguen usando `max_tokens`.
-        if self._config.type == "openai":
+        # El flag se autoadapta si el proveedor rechaza el parámetro.
+        if self._use_max_completion_tokens:
             payload["max_completion_tokens"] = max_tokens
         else:
             payload["max_tokens"] = max_tokens
@@ -165,6 +243,12 @@ class LLMProvider:
             and "thinking" not in payload
         ):
             payload["thinking"] = {"type": "disabled"}
+
+        # Parámetros ya rechazados por este proveedor en llamadas previas
+        # (o antes en esta misma cadena de reintentos): fuera del payload,
+        # ni siquiera se intentan de nuevo.
+        for dropped in self._unsupported_params:
+            payload.pop(dropped, None)
 
         try:
             resp = await self._client.post("chat/completions", json=payload)
@@ -209,6 +293,80 @@ class LLMProvider:
                 else None
             )
             if err_type == "invalid_request_error":
+                # Autoadaptación del parámetro de límite de tokens: si el
+                # proveedor rechaza `max_tokens` (OpenAI real) o
+                # `max_completion_tokens` (algunos compatibles), cambiamos el
+                # flag, lo recordamos para el resto de la vida del provider y
+                # reintentamos la MISMA petición una única vez. Sin esto, un
+                # proveedor OpenAI sin `type=openai` en la config quedaría
+                # deshabilitado para todo el run por un error de forma.
+                err_msg = (err_body.get("error") or {}).get("message", "") or ""
+                rejected_max_tokens = (
+                    not _token_param_retry
+                    and "'max_tokens'" in err_msg
+                    and "max_completion_tokens" in err_msg
+                    and not self._use_max_completion_tokens
+                )
+                rejected_max_completion = (
+                    not _token_param_retry
+                    and "'max_completion_tokens'" in err_msg
+                    and self._use_max_completion_tokens
+                )
+                if rejected_max_tokens or rejected_max_completion:
+                    self._use_max_completion_tokens = rejected_max_tokens
+                    self._log.warning(
+                        "token_param_auto_adapted",
+                        provider=self._config.name,
+                        now_using=(
+                            "max_completion_tokens"
+                            if self._use_max_completion_tokens
+                            else "max_tokens"
+                        ),
+                        hint="añade CREATIVE_LLM__<NOMBRE>__TYPE=openai para "
+                        "evitar esta llamada extra en cada arranque",
+                    )
+                    return await self._call_api(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format=response_format,
+                        _token_param_retry=True,
+                        _dropped_params_this_call=_dropped_params_this_call,
+                    )
+
+                # Autoadaptación genérica: cualquier otro parámetro que el
+                # modelo rechace (p.ej. `temperature` en gpt-5.6, que solo
+                # acepta 1) se elimina del payload en vez de tumbar el
+                # proveedor. max_tokens/max_completion_tokens quedan fuera:
+                # esos se sustituyen (arriba), nunca se eliminan. Tope de 3
+                # parámetros distintos por llamada — un proveedor patológico
+                # que rechace todo no reintenta indefinidamente.
+                match = _UNSUPPORTED_PARAM_RE.search(err_msg)
+                param = match.group(1) if match else None
+                if (
+                    param
+                    and param in payload
+                    and param not in _SPECIAL_PARAMS
+                    and param not in _dropped_params_this_call
+                    and len(_dropped_params_this_call) < 3
+                ):
+                    self._unsupported_params.add(param)
+                    self._log.warning(
+                        "param_auto_dropped",
+                        provider=self._config.name,
+                        param=param,
+                    )
+                    return await self._call_api(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format=response_format,
+                        _token_param_retry=_token_param_retry,
+                        _dropped_params_this_call=_dropped_params_this_call | {param},
+                    )
+
                 raise LLMInvalidRequestError(
                     f"Petición inválida en {self._config.name} "
                     f"(400 invalid_request_error): "

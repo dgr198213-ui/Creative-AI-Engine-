@@ -1,0 +1,33 @@
+# Set de retos para el benchmark de 3 brazos (diseño 22-jul-2026 §3):
+# 6 vagos de empresario no técnico + 2 controles bien formulados.
+name: vagos
+domain: generic
+
+retos:
+  - texto: "Mi tienda online no vende"
+    tipo: vago
+  - texto: "Mis empleados no rinden"
+    tipo: vago
+  - texto: "Pierdo clientes y no sé por qué"
+    tipo: vago
+  - texto: "Quiero crecer pero no puedo contratar"
+    tipo: vago
+  - texto: "Mi restaurante se llena pero no gano dinero"
+    tipo: vago
+  - texto: "La competencia me copia todo"
+    tipo: vago
+  - texto: >
+      Diseña un sistema de fidelización para una cafetería de barrio con
+      presupuesto de 500 euros al mes, dirigido a oficinistas que compran
+      café para llevar en horario de mañana.
+    tipo: control
+  - texto: >
+      Necesito 5 ideas de producto para una app de reserva de citas para
+      peluquerías independientes, monetizable con suscripción mensual
+      por debajo de 20 euros.
+    tipo: control
+
+repeticiones: 3
+poblacion_motor: 8
+generaciones_motor: 3
+ideas_por_brazo: 8

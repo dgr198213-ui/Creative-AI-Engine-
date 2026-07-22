@@ -174,6 +174,24 @@ a.report-btn{text-decoration:none;display:inline-block}
 .sk::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.03),transparent);animation:shimmer 1.4s infinite}
 @keyframes shimmer{to{transform:translateX(100%)}}
 
+/* ================= ESTADO ESPEJO (Analista Funcional) ================= */
+.mirror{display:none;max-width:640px;margin:0 auto}
+.mirror.on{display:block;animation:rise .4s ease both}
+.mirror-text{
+  background:var(--ink-2);border:1px solid var(--ink-3);border-radius:var(--radius);
+  padding:24px 26px;font-size:1.02rem;line-height:1.6;white-space:pre-wrap;
+}
+.mirror-text strong{color:var(--amber);font-weight:600}
+.mirror-actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:22px}
+.mirror-correction{margin-top:16px;display:none}
+.mirror-correction.on{display:block}
+.mirror-correction textarea{
+  width:100%;min-height:80px;resize:vertical;background:var(--ink-2);
+  border:1px solid var(--ink-3);border-radius:var(--radius);color:var(--paper);
+  font-family:'Inter';font-size:.95rem;padding:14px 16px;margin-bottom:12px;
+}
+.mirror-correction textarea:focus{outline:none;border-color:var(--amber)}
+
 @media(prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
 }
@@ -206,6 +224,20 @@ a.report-btn{text-decoration:none;display:inline-block}
       <button class="ex">Reducir el desperdicio de comida en un restaurante</button>
       <button class="ex">Una app para que mayores no se sientan solos</button>
       <button class="ex">Nuevo formato de evento cultural en mi ciudad</button>
+    </div>
+  </section>
+
+  <!-- ESTADO ESPEJO: solo aparece si el Analista Funcional está habilitado
+       en el servidor (CREATIVE_ANALYST_ENABLED). Con el flag apagado,
+       /api/v1/analyze responde 404 y este estado nunca se muestra. -->
+  <section class="mirror" id="mirror">
+    <div class="mirror-text" id="mirrorText"></div>
+    <div class="mirror-correction" id="mirrorCorrection">
+      <textarea id="correctionInput" placeholder="Cuéntame qué no encaja…"></textarea>
+    </div>
+    <div class="mirror-actions" id="mirrorActions">
+      <button class="again" id="mirrorConfirm">✅ Es esto — buscar soluciones</button>
+      <button class="chip" id="mirrorCorrect">✏️ Corregir algo</button>
     </div>
   </section>
 

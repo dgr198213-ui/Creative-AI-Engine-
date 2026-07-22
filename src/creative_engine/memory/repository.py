@@ -63,6 +63,18 @@ CREATE TABLE IF NOT EXISTS run_status (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS bench_results (
+    id           BIGSERIAL PRIMARY KEY,
+    set_name     VARCHAR(100) NOT NULL,
+    challenge    TEXT NOT NULL,
+    reto_tipo    VARCHAR(20) NOT NULL,
+    repetition   INTEGER NOT NULL DEFAULT 0,
+    arms         JSONB NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bench_results_set_name ON bench_results(set_name);
 """
 
 
@@ -317,6 +329,52 @@ class IdeaRepository:
             )
             row = result.fetchone()
             return dict(row._mapping) if row else None
+
+    async def save_bench_result(
+        self,
+        set_name: str,
+        challenge: str,
+        reto_tipo: str,
+        repetition: int,
+        arms: dict[str, Any],
+    ) -> None:
+        """Persiste el resultado de los 3 brazos para un reto/repetición."""
+        async with self._session_factory() as session:
+            await session.execute(
+                text("""
+                    INSERT INTO bench_results
+                        (set_name, challenge, reto_tipo, repetition, arms)
+                    VALUES
+                        (:set_name, :challenge, :reto_tipo, :repetition, CAST(:arms AS jsonb))
+                """),
+                {
+                    "set_name": set_name,
+                    "challenge": challenge,
+                    "reto_tipo": reto_tipo,
+                    "repetition": repetition,
+                    "arms": json.dumps(arms),
+                },
+            )
+            await session.commit()
+
+    async def get_bench_results(self, set_name: str) -> list[dict[str, Any]]:
+        """Todos los resultados persistidos de un set de benchmark."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("""
+                    SELECT challenge, reto_tipo, repetition, arms, created_at
+                    FROM bench_results
+                    WHERE set_name = :set_name
+                    ORDER BY created_at ASC
+                """),
+                {"set_name": set_name},
+            )
+            rows = []
+            for row in result.fetchall():
+                d = dict(row._mapping)
+                d["arms"] = _as_json(d["arms"]) or {}
+                rows.append(d)
+            return rows
 
     @staticmethod
     def row_to_idea(row: Any) -> Idea:

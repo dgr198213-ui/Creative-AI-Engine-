@@ -38,7 +38,7 @@ Tecnologías: {technologies}
 Mercados objetivo: {markets}
 
 Contexto del reto: {challenge}
-
+{profile_block}
 Responde SOLO en JSON:
 {{
     "utility": 0.0,
@@ -61,6 +61,7 @@ class CombinedEvaluatorAgent(BaseAgent):
         self, idea: Idea, context: dict[str, Any] | None = None
     ) -> AgentResult:
         context = context or {}
+        profile_hint = context.get("profile_hint") or ""
         prompt = COMBINED_PROMPT.format(
             title=idea.title,
             description=idea.description,
@@ -68,6 +69,7 @@ class CombinedEvaluatorAgent(BaseAgent):
             technologies=", ".join(idea.features.technologies) or "No especificadas",
             markets=", ".join(idea.features.target_markets) or "No especificados",
             challenge=context.get("challenge", ""),
+            profile_block=f"Perfil del reto (Analista Funcional): {profile_hint}\n" if profile_hint else "",
         )
 
         try:
