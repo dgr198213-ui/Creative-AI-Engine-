@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 173 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 177 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -100,9 +100,11 @@ Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
 
 - Un proveedor se define con `CREATIVE_LLM__<NOMBRE>__*` (NAME, API_KEY,
   BASE_URL, MODEL, TYPE, MAX_CONCURRENT, MIN_INTERVAL_SECONDS, EXTRA_BODY).
-- `TYPE=openai` es OBLIGATORIO para la API real de OpenAI: activa
-  `max_completion_tokens` en el payload. Sin él, el proveedor manda
-  `max_tokens` y los modelos recientes de OpenAI devuelven 400.
+- `TYPE=openai` para la API real de OpenAI activa `max_completion_tokens`
+  en el payload directamente, sin coste de una llamada extra. **Ya no es
+  un requisito, es una optimización**: el provider autoadapta el
+  parámetro solo si `TYPE` falta o llega mal (ver lección de abajo),
+  pero configurarlo bien evita ese primer 400 en cada arranque.
 - El enrutado por rol: `CREATIVE_ROUTING_SPEC=generator=a,b;evaluator=b,a;writer=a`.
   Con varios proveedores y sin spec, la cadena por defecto los usa todos en
   orden (failover automático).
@@ -123,13 +125,29 @@ Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
 - **401 = clave mal copiada**, casi siempre (espacios, comillas). El failover
   ante 401 evita que tumbe el run, pero conviene arreglar la clave.
 - **OpenAI real rechaza `max_tokens` en modelos recientes** (400
-  invalid_request_error): exige `max_completion_tokens`. El provider lo
-  gestiona SOLO si el proveedor tiene `TYPE=openai` configurado (incidente
-  21-jul-2026: terra sin TYPE → 12 batches fallidos, run con 0 élites).
+  invalid_request_error): exige `max_completion_tokens`. Incidente
+  21-jul-2026: terra sin `TYPE` → 12 batches fallidos, run con 0 élites.
+- **La config `TYPE` es una pista, no un requisito (incidente 22-jul-2026,
+  segunda noche).** Terra siguió en 400 pese a tener `TYPE=openai` puesto
+  (la variable no llegaba al contenedor — comillas/espacios/environment
+  equivocado) y **luna tenía exactamente el mismo problema sin que nadie
+  lo detectara**: todo el diagnóstico del primer incidente se centró en
+  terra. Causa raíz única: la elección de parámetro dependía enteramente
+  de que un humano configurase bien una env var por proveedor — frágil
+  por construcción. Fix: `LLMProvider` ahora **autoadapta** el parámetro:
+  si recibe el 400 de "usa max_completion_tokens" (o al revés), cambia el
+  flag, reintenta la misma petición una vez y recuerda la elección de por
+  vida del provider (log `token_param_auto_adapted`). Un proveedor OpenAI
+  sin `TYPE` ya no se deshabilita todo el run — paga un 400+reintento
+  (~1s, gratis) solo en su primera llamada. Configurar `TYPE=openai` sigue
+  siendo mejor (evita ese primer 400), pero ya no es obligatorio para que
+  el proveedor funcione.
 - **Un 400 invalid_request_error deshabilita el proveedor para el resto del
   run** (`provider_disabled_for_run`) y rota al siguiente: no se arregla
-  reintentando. Un run que agota la cadena con población vacía aborta con
-  estado `failed` (`evolution_aborted_empty_population`), nunca completa vacío.
+  reintentando. Esto sigue aplicando a cualquier 400 que NO sea el de
+  parámetro de tokens (esos ya se autoadaptan primero). Un run que agota
+  la cadena con población vacía aborta con estado `failed`
+  (`evolution_aborted_empty_population`), nunca completa vacío.
 - Ante cualquier duda de config: `creative-engine doctor` lo diagnostica en
   segundos. No deducir de logs de runs fallidos.
 
@@ -165,24 +183,25 @@ punto de sincronización.
 | `default` | Gemini (OpenAI-compat) | gemini-flash-latest | —  | Free tier |
 | `zai`     | Z.ai            | glm (flash)        | —      | Free tier |
 | `terra`   | OpenAI (real)   | gpt-5.6-sol        | openai | DE PAGO   |
-| `luna`    | **sin confirmar** — ver nota | **sin confirmar** | probablemente `openai` (pendiente verificar) | **sin confirmar** — verificar si es de pago |
+| `luna`    | OpenAI (real) — confirmado 22-jul | **sin confirmar** modelo exacto | openai | **sin confirmar** — verificar si es de pago |
 
-**Nota sobre `luna` (21-jul-2026):** nadie en el historial de sesiones sabe
-qué servicio/modelo es. Evidencia de los logs de producción de ese día:
-`luna` falló con el mismo 400 `invalid_request_error` ("Unsupported
-parameter: 'max_tokens' ... Use 'max_completion_tokens' instead") que
-`terra`, y el mensaje de la excepción imprime "en openai" para ambos —
-señal de que ninguno tiene `CREATIVE_LLM__<NOMBRE>__NAME` configurado
-explícitamente (el default de `LLMProviderConfig.name` es `"openai"`).
-Esto sugiere que `luna` también corre sobre un backend OpenAI real y
-probablemente necesite `TYPE=openai`, pero es una inferencia a partir de
-los logs, no un dato confirmado. Verificar con `railway variables | grep
-LUNA` (o el panel de Railway) y rellenar esta fila antes de tocar de nuevo
-el routing.
+**Nota sobre `luna` (actualizado 22-jul-2026):** la auditoría del incidente
+de la segunda noche (P1) confirma que `luna` es OpenAI real: falla con el
+mismo 400 `invalid_request_error` exacto que `terra` ("Unsupported
+parameter: 'max_tokens' ... Use 'max_completion_tokens' instead"), y con
+la autoadaptación del provider ya funciona sin depender de `TYPE`. Queda
+pendiente confirmar el **modelo exacto** y si **factura dinero real** como
+terra — verificar con `railway variables | grep LUNA` y rellenar antes de
+tocar de nuevo el routing. Tampoco está de más poner `CREATIVE_LLM__LUNA__TYPE=openai`
+explícitamente: con la autoadaptación ya no es obligatorio, pero evita el
+400 inicial en cada arranque.
 
 Routing actual: `generator=terra,luna,default,zai`;
 `evaluator=luna,terra,default,zai`; `writer=terra,default`.
-OJO: `terra` factura dinero real (y posiblemente `luna` también, a
+**Pendiente operativo:** el writer no tiene fallback gratuito
+(`terra,default` — si terra cae y Gemini está saturado, el writer se
+queda sin proveedor). Cambiar a `writer=terra,default,zai` en Railway.
+OJO: `terra` factura dinero real (y probablemente `luna` también, a
 confirmar). Cualquier cambio que multiplique llamadas del generator/writer
 tiene coste directo, no solo cuota.
 
