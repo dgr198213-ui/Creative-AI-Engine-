@@ -50,6 +50,14 @@ class LLMProvider:
         self._semaphore = asyncio.Semaphore(config.max_concurrent)
         self._last_request_time: float = 0.0
         self._min_interval = config.min_interval_seconds
+        # Qué parámetro de límite de tokens acepta este proveedor. La API real
+        # de OpenAI exige `max_completion_tokens`; los compatibles (Gemini,
+        # Z.ai...) usan `max_tokens`. `type=openai` en la config es solo la
+        # pista inicial: si el proveedor rechaza el parámetro con un 400, nos
+        # autoadaptamos y recordamos la elección (ver _call_api). Así un
+        # proveedor OpenAI sin TYPE configurado se corrige solo en la primera
+        # llamada en vez de quedar deshabilitado todo el run.
+        self._use_max_completion_tokens: bool = config.type == "openai"
 
         # httpx descarta el path de base_url si la petición empieza por "/".
         # Normalizamos: base con barra final + ruta relativa sin barra inicial,
@@ -130,6 +138,7 @@ class LLMProvider:
         temperature: float = 0.8,
         max_tokens: int = 4096,
         response_format: dict[str, Any] | None = None,
+        _token_param_retry: bool = False,
     ) -> LLMResponse:
         """Llamada real a la API con retry."""
         start = time.perf_counter()
@@ -147,7 +156,8 @@ class LLMProvider:
         # La API real de OpenAI rechaza `max_tokens` en modelos recientes
         # (400 invalid_request_error) y exige `max_completion_tokens`. El
         # resto de proveedores compatibles siguen usando `max_tokens`.
-        if self._config.type == "openai":
+        # El flag se autoadapta si el proveedor rechaza el parámetro.
+        if self._use_max_completion_tokens:
             payload["max_completion_tokens"] = max_tokens
         else:
             payload["max_tokens"] = max_tokens
@@ -209,6 +219,46 @@ class LLMProvider:
                 else None
             )
             if err_type == "invalid_request_error":
+                # Autoadaptación del parámetro de límite de tokens: si el
+                # proveedor rechaza `max_tokens` (OpenAI real) o
+                # `max_completion_tokens` (algunos compatibles), cambiamos el
+                # flag, lo recordamos para el resto de la vida del provider y
+                # reintentamos la MISMA petición una única vez. Sin esto, un
+                # proveedor OpenAI sin `type=openai` en la config quedaría
+                # deshabilitado para todo el run por un error de forma.
+                err_msg = (err_body.get("error") or {}).get("message", "") or ""
+                rejected_max_tokens = (
+                    not _token_param_retry
+                    and "'max_tokens'" in err_msg
+                    and "max_completion_tokens" in err_msg
+                    and not self._use_max_completion_tokens
+                )
+                rejected_max_completion = (
+                    not _token_param_retry
+                    and "'max_completion_tokens'" in err_msg
+                    and self._use_max_completion_tokens
+                )
+                if rejected_max_tokens or rejected_max_completion:
+                    self._use_max_completion_tokens = rejected_max_tokens
+                    self._log.warning(
+                        "token_param_auto_adapted",
+                        provider=self._config.name,
+                        now_using=(
+                            "max_completion_tokens"
+                            if self._use_max_completion_tokens
+                            else "max_tokens"
+                        ),
+                        hint="añade CREATIVE_LLM__<NOMBRE>__TYPE=openai para "
+                        "evitar esta llamada extra en cada arranque",
+                    )
+                    return await self._call_api(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format=response_format,
+                        _token_param_retry=True,
+                    )
                 raise LLMInvalidRequestError(
                     f"Petición inválida en {self._config.name} "
                     f"(400 invalid_request_error): "
