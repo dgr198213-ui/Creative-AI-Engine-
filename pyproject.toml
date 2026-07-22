@@ -70,11 +70,3 @@ ignore = ["E501"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-
-[tool.vercel]
-# El despliegue real es Railway (ver DEPLOY.md: SSE + Postgres persistente
-# no encajan en funciones serverless). Este proyecto de Vercel es un
-# integración de preview automática duplicada; sin este entrypoint, el
-# detector de FastAPI de Vercel falla el build porque la app vive en
-# src/creative_engine/api/app.py, no en una ubicación por defecto.
-entrypoint = "src.creative_engine.api.app:app"
