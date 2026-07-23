@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 215 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 293 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -32,7 +32,8 @@ mejor de estructurarlo.
 ```
 src/creative_engine/
 ├── core/        modelos Pydantic (models.py), config (config.py),
-│                eventos (EventBus), excepciones
+│                domain_registry.py (domain packs, Fase 6), eventos
+│                (EventBus), excepciones
 ├── evolution/   map_elites.py (archivo + selección: fitness / curiosidad),
 │                encoders.py (embeddings + novedad objetiva),
 │                mutation.py, crossover.py, surprise.py (puerta adaptativa),
@@ -40,20 +41,22 @@ src/creative_engine/
 ├── agents/      generator, combined_evaluator (3 dims en 1 llamada),
 │                evaluator_orchestrator, writer, critic, base
 ├── llm/         provider.py (cliente OpenAI-compatible), router.py
-│                (enrutado por rol + failover), factory.py
+│                (enrutado por rol + failover), factory.py, budget.py
+│                (guard de presupuesto)
 ├── memory/      repository.py (PostgreSQL), graph.py (Neo4j, opcional),
 │                recommendation
 ├── analysis/    analyst.py (Analista Funcional), mirror.py (espejo de
 │                confirmación), context.py (perfil → hint para el motor)
 ├── api/         app.py (FastAPI), auth.py (API key), guardrails.py (rate
 │                limit + tope de presupuesto), routes/ (evolution, stream
-│                SSE, ideas, memory, diagnostics, analysis), static/
-│                (panel: index.html + app.js)
+│                SSE, ideas, memory, diagnostics, analysis, budget,
+│                domains), static/ (panel: index.html + app.js)
 ├── bench/       arnés de benchmark de 3 brazos (config.py, harness.py,
 │                judge.py, report.py) — ver sección "Analista Funcional"
 ├── benchmark.py motor QD vs prompt único, 2 brazos (la validación de la tesis)
 ├── diagnostics.py  doctor: verifica claves/enrutado/BD
-└── main.py      CLI: serve, evolve, benchmark (2 brazos), bench (3 brazos), doctor
+└── main.py      CLI: serve, evolve, benchmark (2 brazos), bench (3 brazos),
+                  doctor, domain (list/validate), diagnose-length-bias
 ```
 
 El flujo del motor (`qd_engine._process_batch`): **codificar (local, gratis)
@@ -397,6 +400,101 @@ runs/reinicios necesita persistencia.
 modelo de `luna`, ver inventario de proveedores) — sin esto, el guard
 los sigue tratando como gratuitos y nunca los excluye.
 
+## Domain Packs (Fase 6, 23-jul-2026)
+
+Un dominio ya no es un enum en código (`DomainName`, retirado): es un
+directorio autocontenido bajo `configs/domains/<nombre>/`, cargado por
+`core/domain_registry.py` al arrancar. Requisito no negociable de esta
+fase, verificado por `tests/test_generic_domain_regression.py` (semilla
+fija + LLM mockeado, valores exactos): el dominio `generic` se comporta
+EXACTAMENTE igual que antes de la refactorización.
+
+### Por qué (las tres limitaciones que resolvía)
+
+1. `DomainName` obligaba a tocar `src/` para añadir un dominio.
+2. Un dominio solo variaba pesos/mutaciones/dimensiones — generator,
+   evaluator y analyst usaban el MISMO texto para todos los dominios
+   (solo el generador tenía `system_prompt`; evaluator y analyst ni eso).
+3. El perfil del Analista Funcional era fijo — el mismo esquema para una
+   campaña de marketing que para un artista independiente.
+
+### Cómo crear un domain pack
+
+```
+configs/domains/<nombre>/
+├── domain.yaml          # obligatorio: name, display_name, description,
+│                          descriptor_mode, behavior_dimensions,
+│                          evaluation_weights, allowed_mutations,
+│                          default_population_size, default_generations
+├── prompts/
+│   ├── generator.md     # opcional; persona del generador. Si falta,
+│   │                      hereda de configs/domains/base/
+│   ├── evaluator.md     # opcional; rúbrica del evaluador en lenguaje
+│   │                      del dominio. Ídem, hereda de "base"
+│   └── analyst.md       # opcional; cómo interrogar a un usuario de
+│                          este dominio. Ídem
+├── profile.yaml         # opcional: campos extra de ChallengeProfile.dominio
+│                          (formato: campos: [{nombre, descripcion}, ...])
+├── examples.yaml         # opcional: lista de retos de ejemplo (panel)
+└── bench.yaml            # opcional: set de retos (creative-engine bench)
+```
+
+Todo salvo `domain.yaml` es opcional y hereda de `configs/domains/base/`
+(el pack fundacional — su `domain.yaml` declara `name: generic`). **Añadir
+un dominio no toca ni una línea de `src/`** — es exactamente lo que probó
+el pack `tuesdi` (visibilidad de artistas independientes), creado ANTES
+de migrar `base`/`marketing`/`industrial_design` al nuevo formato, a
+propósito: si la abstracción de cascada estuviera mal diseñada, un pack
+que no puede apoyarse en `base` lo habría revelado.
+
+Los prompts admiten los placeholders `{reto}`, `{perfil}`,
+`{inspiraciones}` (`domain_registry.format_domain_prompt`), resueltos
+con el reto/perfil/pista de variación de cada llamada. Un placeholder
+desconocido (typo) no rompe el run: el prompt se usa sin resolver
+(degradación con elegancia) — pero `creative-engine domain validate`
+lo detecta antes de llegar a producción.
+
+**Validar antes de desplegar:**
+```bash
+creative-engine domain validate configs/domains/<nombre>
+creative-engine domain list       # todos los packs cargados
+```
+Detecta esquema inválido (`domain.yaml`), placeholders desconocidos en
+los prompts, y prompts que no se pueden formatear.
+
+**Arranque ruidoso:** un pack con `domain.yaml`/`profile.yaml`/
+`examples.yaml` inválido hace FALLAR `Settings.load()` (nunca se salta
+en silencio — un dominio mal configurado que "funciona" con los
+defaults de otro es peor que no arrancar). Un `configs/domains/`
+ausente por completo sí es válido: cae al "generic" embebido
+(`config.default_generic_domain`), para poder arrancar sin ningún
+archivo de configuración.
+
+### Perfil extensible del Analista (D4)
+
+`ChallengeProfile.dominio: dict` recoge los campos que el pack declare
+en `profile.yaml`. `FunctionalAnalystAgent.analyze()` acepta un `domain`
+opcional: si trae `profile_fields`, extiende el esquema JSON que le pide
+al LLM con un bloque `dominio` y solo recoge los campos DECLARADOS (lo
+que el LLM invente de más no se cuela en el perfil). Sin `domain` (o sin
+campos declarados), comportamiento idéntico al de siempre.
+
+### Endpoint y panel
+
+`GET /api/v1/domains` devuelve los packs cargados (nombre, título,
+descripción, ejemplos). El panel (`app.js::loadDomains`) construye sus
+chips de dominio y los retos de ejemplo desde ahí al cargar — ya no hay
+dominios fijos en `index.html`. Sin `configs/domains/`, cae a un único
+chip "General" para no dejar el panel sin ámbito seleccionable.
+
+### Packs disponibles hoy
+
+`base` (fundacional, `name: generic`), `marketing`, `industrial_design`
+(ambos heredan evaluator/analyst de `base`, solo traen su propio
+`generator.md`), y `tuesdi` (visibilidad de artistas independientes —
+trae los tres prompts propios + `profile.yaml` + `bench.yaml`, prueba de
+aceptación de la fase).
+
 ## Convenciones
 
 - Python ≥ 3.12, Pydantic v2, tipos everywhere, ruff limpio.
@@ -458,10 +556,22 @@ cooldown, puerta de sorpresa, salvage de JSON malformado). El
 ciclo base está validado en producción con runs completos e informes reales.
 El Analista Funcional y el benchmark de 3 brazos están implementados y en
 verde en tests, pero **apagados en producción** (`CREATIVE_ANALYST_ENABLED=false`).
-Siguiente paso real: correr `creative-engine bench --set configs/bench/vagos.yaml`
-contra proveedores reales y decidir con los 3 criterios de éxito si el
-Analista se activa por defecto o se descarta — no activarlo "porque sí"
-sin ese dato. En paralelo, seguir con lo de siempre: **usar** (retos
-reales) y **medir** (el modo `benchmark` de 2 brazos). Solo después,
-integrar más técnicas del roadmap — y siempre con la regla 4 (no
-multiplicar evaluaciones) en mente.
+
+Fase 6 (Domain Packs) completa: `DomainName` retirado, registro dinámico
+desde `configs/domains/`, prompts en cascada, perfil extensible (D4),
+`GET /api/v1/domains` + panel dinámico, pack `tuesdi` como validación de
+la abstracción, `base`/`marketing`/`industrial_design` migrados al
+nuevo formato. El benchmark de 2 y 3 brazos sigue siendo válido: el
+dominio `generic` se comporta exactamente igual (regresión verificada).
+
+**Pendiente antes de activar el Analista:** correr
+`creative-engine bench --set configs/bench/vagos.yaml` contra
+proveedores reales y decidir con los 3 criterios de éxito si se activa
+por defecto o se descarta — no activarlo "porque sí" sin ese dato.
+**Pendiente del diagnóstico de sesgo de longitud** (Fase 5, bloque 4):
+sigue sin confirmar, ejecutar `creative-engine diagnose-length-bias`
+donde haya red. En paralelo, seguir con lo de siempre: **usar** (retos
+reales, ahora también con el pack `tuesdi`) y **medir** (el modo
+`benchmark` de 2 brazos, y `bench --set configs/domains/tuesdi/bench.yaml`
+para ese dominio). Solo después, integrar más técnicas del roadmap — y
+siempre con la regla 4 (no multiplicar evaluaciones) en mente.
