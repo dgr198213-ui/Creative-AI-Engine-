@@ -41,6 +41,7 @@ from ..evolution.mutation import MutationEngine
 from ..evolution.qd_engine import QDEngine
 from ..llm.factory import build_router, role_llms
 from ..llm.router import LLMModelRouter
+from ..memory.repository import IdeaRepository
 from .config import BenchSetConfig
 from .judge import judge_blind
 
@@ -96,6 +97,37 @@ class BenchChallengeResult:
             "repetition": self.repetition,
             "arms": {k: v.to_dict() for k, v in self.arms.items()},
         }
+
+
+def _row_to_challenge_result(row: dict[str, Any]) -> BenchChallengeResult:
+    """Reconstruye un BenchChallengeResult desde una fila persistida en BD.
+
+    Lo que se guarda (`BenchArmResult.to_dict()`) ya es ligero — títulos y
+    métricas, sin genome_vector ni descripciones completas — así que el
+    informe final se puede armar leyendo de BD sin mantener en memoria
+    los resultados originales (con sus objetos Idea) durante todo el set.
+    """
+    arms = {
+        key: BenchArmResult(
+            arm=data["arm"],
+            n_ideas=data["n_ideas"],
+            mean_pairwise_distance=data["mean_pairwise_distance"],
+            min_pairwise_distance=data["min_pairwise_distance"],
+            blind_utility=data["blind_utility"],
+            cost=ArmCost(**data["cost"]),
+            elapsed_s=data["elapsed_s"],
+            qd_score=data.get("qd_score"),
+            coverage=data.get("coverage"),
+            titles=data.get("titles", []),
+        )
+        for key, data in row["arms"].items()
+    }
+    return BenchChallengeResult(
+        challenge=row["challenge"],
+        reto_tipo=row["reto_tipo"],
+        repetition=row["repetition"],
+        arms=arms,
+    )
 
 
 def _cost_delta(
@@ -287,9 +319,21 @@ async def run_single_challenge(
 
 
 async def run_bench_set(
-    set_config: BenchSetConfig, settings: Settings
+    set_config: BenchSetConfig,
+    settings: Settings,
+    repository: IdeaRepository | None = None,
 ) -> list[BenchChallengeResult]:
-    """Ejecuta el set completo: cada reto x N repeticiones, 3 brazos cada vez."""
+    """Ejecuta el set completo: cada reto x N repeticiones, 3 brazos cada vez.
+
+    Con `repository`: cada reto/repetición se persiste en BD según se
+    completa (no se acumula en memoria hasta el informe final) y el set
+    es reanudable — si el proceso muere a mitad (p.ej. OOM), volver a
+    llamar con el mismo `set_config.name` salta lo ya persistido en vez
+    de repetirlo. El informe final se reconstruye leyendo de BD.
+
+    Sin `repository`: comportamiento legado, todo en memoria y sin
+    reanudación posible (no hay dónde reanudar desde sin persistencia).
+    """
     router = build_router(settings)
     roles = role_llms(router)
     domain = settings.get_domain(DomainName(set_config.domain))
@@ -297,10 +341,27 @@ async def run_bench_set(
     # todo el set, no por brazo/repetición.
     encoder = IdeaEncoder()
 
+    done: set[tuple[str, int]] = set()
+    if repository is not None:
+        existing = await repository.get_bench_results(set_config.name)
+        done = {(r["challenge"], r["repetition"]) for r in existing}
+        if done:
+            logger.info(
+                "bench_set_resuming", set_name=set_config.name, already_done=len(done)
+            )
+
     results: list[BenchChallengeResult] = []
     try:
         for reto in set_config.retos:
             for rep in range(set_config.repeticiones):
+                if (reto.texto, rep) in done:
+                    logger.info(
+                        "bench_challenge_skipped_resumed",
+                        challenge=reto.texto[:60],
+                        repetition=rep,
+                    )
+                    continue
+
                 result = await run_single_challenge(
                     challenge=reto.texto,
                     reto_tipo=reto.tipo,
@@ -311,14 +372,31 @@ async def run_bench_set(
                     set_config=set_config,
                     encoder=encoder,
                 )
-                results.append(result)
                 logger.info(
                     "bench_challenge_completed",
                     challenge=reto.texto[:60],
                     tipo=reto.tipo,
                     repetition=rep,
                 )
+
+                if repository is not None:
+                    await repository.save_bench_result(
+                        set_name=set_config.name,
+                        challenge=result.challenge,
+                        reto_tipo=result.reto_tipo,
+                        repetition=result.repetition,
+                        arms={k: v.to_dict() for k, v in result.arms.items()},
+                    )
+                    # Ya está en BD: no hace falta conservar las ideas
+                    # completas de este reto en memoria hasta el informe.
+                    del result
+                else:
+                    results.append(result)
     finally:
         await router.close_all()
+
+    if repository is not None:
+        rows = await repository.get_bench_results(set_config.name)
+        return [_row_to_challenge_result(r) for r in rows]
 
     return results
