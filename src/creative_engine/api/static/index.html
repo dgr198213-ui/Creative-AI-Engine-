@@ -212,19 +212,13 @@ a.report-btn{text-decoration:none;display:inline-block}
       <textarea id="challenge" placeholder="Ej. Una campaña para lanzar una marca de café sostenible entre jóvenes urbanos…"></textarea>
     </div>
     <div class="controls">
-      <div class="scope" role="group" aria-label="Ámbito">
-        <button class="chip" data-domain="generic" aria-pressed="true">General</button>
-        <button class="chip" data-domain="industrial_design" aria-pressed="false">Producto</button>
-        <button class="chip" data-domain="marketing" aria-pressed="false">Marketing</button>
-      </div>
+      <!-- Los chips de dominio se construyen en app.js desde GET /api/v1/domains
+           (Fase 6, bloque 4) — un domain pack nuevo aparece aquí sin tocar este HTML. -->
+      <div class="scope" role="group" aria-label="Ámbito" id="scope"></div>
       <button class="go" id="go" disabled><span class="dot"></span>Generar ideas</button>
     </div>
     <p class="hint">Tardará un par de minutos: las ideas irán apareciendo conforme el motor las descubre.</p>
-    <div class="examples" id="examples">
-      <button class="ex">Reducir el desperdicio de comida en un restaurante</button>
-      <button class="ex">Una app para que mayores no se sientan solos</button>
-      <button class="ex">Nuevo formato de evento cultural en mi ciudad</button>
-    </div>
+    <div class="examples" id="examples"></div>
   </section>
 
   <!-- ESTADO ESPEJO: solo aparece si el Analista Funcional está habilitado

@@ -117,6 +117,7 @@ def create_app() -> FastAPI:
     from .routes.analysis import router as analysis_router
     from .routes.budget import router as budget_router
     from .routes.diagnostics import router as diagnostics_router
+    from .routes.domains import router as domains_router
     from .routes.evolution import router as evolution_router
     from .routes.ideas import router as ideas_router
     from .routes.memory import router as memory_router
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
     app.include_router(diagnostics_router, prefix="/api/v1", tags=["Diagnostics"])
     app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"])
     app.include_router(budget_router, prefix="/api/v1", tags=["Budget"])
+    app.include_router(domains_router, prefix="/api/v1", tags=["Domains"])
 
     @app.get("/health")
     async def health() -> dict[str, str]:
