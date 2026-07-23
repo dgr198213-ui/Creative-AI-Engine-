@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS bench_results (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bench_results_set_name ON bench_results(set_name);
+
+CREATE TABLE IF NOT EXISTS provider_spend (
+    provider           VARCHAR(64) NOT NULL,
+    period_key         VARCHAR(20) NOT NULL,
+    cost_usd           DOUBLE PRECISION NOT NULL DEFAULT 0,
+    prompt_tokens      BIGINT NOT NULL DEFAULT 0,
+    completion_tokens  BIGINT NOT NULL DEFAULT 0,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (provider, period_key)
+);
 """
 
 
@@ -375,6 +385,55 @@ class IdeaRepository:
                 d["arms"] = _as_json(d["arms"]) or {}
                 rows.append(d)
             return rows
+
+    async def record_provider_spend(
+        self,
+        provider: str,
+        period_key: str,
+        cost_usd: float,
+        prompt_tokens: int,
+        completion_tokens: int,
+    ) -> None:
+        """Acumula el gasto estimado de un proveedor en un periodo (upsert).
+
+        Fase 5, bloque 3 (guard de presupuesto): el coste es una
+        ESTIMACIÓN (tokens x precio configurado), no la factura real —
+        ver CLAUDE.md. Suma sobre lo ya acumulado en vez de sobrescribir,
+        para que llamadas de runs distintos en el mismo periodo se agreguen.
+        """
+        async with self._session_factory() as session:
+            await session.execute(
+                text("""
+                    INSERT INTO provider_spend
+                        (provider, period_key, cost_usd, prompt_tokens, completion_tokens, updated_at)
+                    VALUES
+                        (:provider, :period_key, :cost_usd, :prompt_tokens, :completion_tokens, NOW())
+                    ON CONFLICT (provider, period_key) DO UPDATE SET
+                        cost_usd = provider_spend.cost_usd + EXCLUDED.cost_usd,
+                        prompt_tokens = provider_spend.prompt_tokens + EXCLUDED.prompt_tokens,
+                        completion_tokens = provider_spend.completion_tokens + EXCLUDED.completion_tokens,
+                        updated_at = NOW()
+                """),
+                {
+                    "provider": provider,
+                    "period_key": period_key,
+                    "cost_usd": cost_usd,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                },
+            )
+            await session.commit()
+
+    async def get_period_spend(self, period_key: str) -> dict[str, float]:
+        """Gasto estimado (USD) por proveedor acumulado en el periodo dado."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text(
+                    "SELECT provider, cost_usd FROM provider_spend WHERE period_key = :period_key"
+                ),
+                {"period_key": period_key},
+            )
+            return {row.provider: float(row.cost_usd) for row in result.fetchall()}
 
     @staticmethod
     def row_to_idea(row: Any) -> Idea:

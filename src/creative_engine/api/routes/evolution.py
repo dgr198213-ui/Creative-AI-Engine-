@@ -29,6 +29,7 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
     from ...evolution.encoders import get_shared_encoder
     from ...evolution.mutation import MutationEngine
     from ...evolution.qd_engine import QDEngine
+    from ...llm.budget import get_budget_status
     from ...llm.factory import build_router, role_llms
 
     settings = get_settings()
@@ -39,7 +40,11 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
             detail="No hay proveedores LLM configurados (CREATIVE_LLM__*)",
         )
 
-    router = build_router(settings)
+    # Guard de presupuesto (Fase 5, bloque 3): si el gasto estimado del
+    # periodo ya superó CREATIVE_BUDGET_LIMIT, construir el router SIN los
+    # proveedores de pago — el run se completa igual con los gratuitos.
+    budget_status = await get_budget_status(settings, request.app.state.repository)
+    router = build_router(settings, budget_excluded=set(budget_status.excluded_providers))
     roles = role_llms(router)
     gen_llm = roles["generator"]
     eval_llm = roles["evaluator"]
@@ -62,9 +67,28 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
         repository=request.app.state.repository,
         on_generation=on_generation,
     )
-    # Guardamos el router para cerrarlo tras el run.
+    # Guardamos el router para cerrarlo (y contabilizar su gasto) tras el run.
     engine._llm_router = router  # type: ignore[attr-defined]
     return engine
+
+
+async def _close_and_record_spend(engine: QDEngine, request: Request) -> None:
+    """Cierra el router del run y persiste el gasto estimado (bloque 3).
+
+    Compartido entre /evolution/start y /evolution/stream: ambos
+    construyen el motor con `_build_qd_engine` y deben registrar el
+    consumo real de proveedores de pago antes de cerrarlos.
+    """
+    from ...core.config import get_settings
+    from ...llm.budget import record_run_spend
+
+    llm_router = getattr(engine, "_llm_router", None)
+    if llm_router is None:
+        return
+    try:
+        await record_run_spend(llm_router, get_settings(), request.app.state.repository)
+    finally:
+        await llm_router.close_all()
 
 
 @router.post("/evolution/start", dependencies=[Depends(enforce_evolution_rate_limit)])
@@ -79,9 +103,7 @@ async def start_evolution(request_body: EvolutionRequest, request: Request) -> d
     try:
         state = await engine.run_evolution(request_body)
     finally:
-        router = getattr(engine, "_llm_router", None)
-        if router is not None:
-            await router.close_all()
+        await _close_and_record_spend(engine, request)
 
     top_ideas = sorted(state.archive, key=lambda c: c.fitness, reverse=True)[:10]
 

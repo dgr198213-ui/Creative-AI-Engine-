@@ -347,6 +347,56 @@ de regresión (`tests/test_security.py` — no existían antes de esta fase):
 - **`docs_url`/`redoc_url`/`openapi_url`** en `None` cuando `debug=False`
   (`api/app.py::create_app`).
 
+## Guard de presupuesto (Fase 5, bloque 3)
+
+Antes, la estrategia "usar proveedores de pago hasta agotar el
+presupuesto y luego pasar a gratis" era manual: vigilar el usage y
+editar `CREATIVE_ROUTING_SPEC` a mano en el momento justo. Ahora se
+automatiza con la opción B del diseño: **precio por millón de tokens
+configurable por proveedor**, no contador de tokens crudos (mezclaría
+proveedores caros y gratis) ni consulta a la API de usage de cada
+proveedor (acopla a uno concreto). El coste es una ESTIMACIÓN (tokens x
+precio declarado), no la factura real.
+
+**Variables nuevas:**
+- `CREATIVE_LLM__<NOMBRE>__PRICE_IN` / `PRICE_OUT`: USD por millón de
+  tokens de prompt/completion. Sin declarar (0.0 por defecto), el
+  proveedor se trata como gratuito y nunca cuenta para el guard.
+- `CREATIVE_BUDGET_LIMIT`: límite estimado en USD por periodo. `0`
+  (por defecto) = sin límite, el guard nunca degrada (solo contabiliza
+  si hay BD).
+- `CREATIVE_BUDGET_PERIOD`: `monthly` (por defecto) o `daily` — ventana
+  de acumulación del gasto.
+- `CREATIVE_BUDGET_WARNING_RATIO`: umbral de aviso, 0.8 por defecto.
+- `CREATIVE_BUDGET_ENFORCE`: `true` por defecto. En `false`, desactiva
+  la degradación (el routing no cambia) pero la contabilidad y los
+  avisos siguen intactos — escape para casos donde se quiere solo
+  observar el gasto antes de dejar que el guard actúe.
+
+**Comportamiento (`llm/budget.py`):** en cada `/evolution/start` o
+`/evolution/stream`, antes de construir el router
+(`api/routes/evolution.py::_build_qd_engine`), se consulta el gasto
+acumulado del periodo en BD (`get_budget_status`). Si supera
+`CREATIVE_BUDGET_LIMIT` y `CREATIVE_BUDGET_ENFORCE=true`, el router se
+construye SIN los proveedores de pago (`LLMModelRouter(budget_excluded=...)`)
+— el motor sigue funcionando con los gratuitos, nunca falla el run por
+esto salvo que TODOS los proveedores de un rol sean de pago. Al 80% del
+límite, log `budget_warning` sin tocar el routing. Al terminar cada run
+(`_close_and_record_spend`, compartido entre `/start` y `/stream`), se
+persiste el gasto real de los proveedores de pago con
+`record_run_spend` — sin BD, el guard sigue activo dentro del proceso
+por los contadores en memoria del router, pero la acumulación entre
+runs/reinicios necesita persistencia.
+
+**Endpoint:** `GET /api/v1/budget` → `spent_usd`, `limit_usd`, `period`,
+`period_key`, `status` (`ok` | `warning` | `downgraded`),
+`excluded_providers`.
+
+**Pendiente operativo:** rellenar `PRICE_IN`/`PRICE_OUT` para `terra` y
+`luna` en Railway con el precio real de gpt-5.6-sol (y confirmar el
+modelo de `luna`, ver inventario de proveedores) — sin esto, el guard
+los sigue tratando como gratuitos y nunca los excluye.
+
 ## Convenciones
 
 - Python ≥ 3.12, Pydantic v2, tipos everywhere, ruff limpio.
@@ -374,12 +424,12 @@ el routing DEBE actualizar esta tabla y las lecciones de arriba en el mismo
 commit. Las sesiones no comparten contexto entre sí; este archivo es el
 punto de sincronización.
 
-| Nombre    | Servicio        | Modelo             | TYPE   | Coste     |
-|-----------|-----------------|--------------------|--------|-----------|
-| `default` | Gemini (OpenAI-compat) | gemini-flash-latest | —  | Free tier |
-| `zai`     | Z.ai            | glm (flash)        | —      | Free tier |
-| `terra`   | OpenAI (real)   | gpt-5.6-sol        | openai | DE PAGO   |
-| `luna`    | OpenAI (real) — confirmado 22-jul | **sin confirmar** modelo exacto | openai | **sin confirmar** — verificar si es de pago |
+| Nombre    | Servicio        | Modelo             | TYPE   | Coste     | PRICE_IN/OUT (guard presupuesto) |
+|-----------|-----------------|--------------------|--------|-----------|----------------------------------|
+| `default` | Gemini (OpenAI-compat) | gemini-flash-latest | —  | Free tier | sin declarar (gratuito, correcto) |
+| `zai`     | Z.ai            | glm (flash)        | —      | Free tier | sin declarar (gratuito, correcto) |
+| `terra`   | OpenAI (real)   | gpt-5.6-sol        | openai | DE PAGO   | **sin declarar — el guard lo trata como gratuito y nunca lo excluye** |
+| `luna`    | OpenAI (real) — confirmado 22-jul | **sin confirmar** modelo exacto | openai | **sin confirmar** — verificar si es de pago | sin declarar |
 
 **Nota sobre `luna` (actualizado 22-jul-2026):** la auditoría del incidente
 de la segunda noche (P1) confirma que `luna` es OpenAI real: falla con el
