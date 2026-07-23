@@ -174,6 +174,58 @@ Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
 - Ante cualquier duda de config: `creative-engine doctor` lo diagnostica en
   segundos. No deducir de logs de runs fallidos.
 
+## Retención de memoria entre runs (incidente 22-jul-2026)
+
+Un run desde el panel (población 8, 3 generaciones) hacía subir la RAM de
+~94 MB a ~870 MB y se quedaba ahí 90 minutos después de terminar, sin
+bajar. 90 minutos más tarde, un segundo proceso (bench) provocó OOM y
+Railway mató el contenedor.
+
+**Causa raíz: `IdeaEncoder()` se reconstruía en cada llamada a
+`/evolution/start` o `/evolution/stream`** (`api/routes/evolution.py`,
+`_build_qd_engine`). En su primer uso carga `sentence-transformers`
+(torch) — cientos de MB de RSS entre el modelo y los buffers de sus hilos
+BLAS. No es una fuga de objetos Python (esos se recolectan solos por
+conteo de referencias): son los asignadores nativos de torch/MKL, que NO
+devuelven memoria liberada al sistema operativo — la retienen en arenas
+por si se vuelve a pedir. Reconstruir el encoder run tras run repetía ese
+coste sin ninguna ganancia, y la memoria nunca volvía a bajar por sí sola.
+
+**Fix (`evolution/encoders.py::get_shared_encoder`):** el servidor mantiene
+UNA instancia de `IdeaEncoder` para todo el proceso, cargada perezosamente
+en el primer run y reutilizada en todos los siguientes —
+`_build_qd_engine` ya no llama a `IdeaEncoder()` directamente. **Decisión
+consciente:** el encoder se mantiene cargado a propósito porque recargarlo
+es caro; esa memoria queda descontada del objetivo de "la RAM vuelve al
+baseline". El nuevo baseline en reposo incluye el encoder cargado — el
+objetivo real es que la RAM **tras un run no crezca respecto al baseline
+con el encoder ya cargado** (validado por `test_memory_retention.py`: dos
+runs seguidos, el segundo no debe pesar más que el primero). El CLI
+(`main.py`, `bench/harness.py`) ya cargaba el encoder una sola vez por
+proceso — ese patrón no cambia, solo se replica en el servidor de la API.
+
+**Limpieza explícita al terminar cada run** (`qd_engine.py::run_evolution`,
+bloque `finally`, cubre éxito/fallo/abort): se borra la referencia al
+archivo MAP-Elites completo (`archive`, todas las celdas del grid, no solo
+las ocupadas — ya copiadas a `state.archive`) y al contexto de generación
+ANTES de llamar a `gc.collect()` + `malloc_trim(0)` (`core/memory_utils.py`)
+— si no se borran antes, el frame de la función los sigue referenciando y
+la recolección es un no-op. `malloc_trim` es lo que de verdad le pide a
+glibc que devuelva páginas libres al SO; `gc.collect()` solo no lo
+consigue con la basura fina del run (miles de objetos `Idea`, prompts,
+respuestas descartadas de generaciones intermedias).
+
+**Logging para verificar sin depender del panel:** cada run emite
+`run_memory_footprint` (`rss_start_mb`, `rss_end_mb`, `rss_delta_mb`) al
+terminar, vía `core/memory_utils.current_rss_mb()` (lee `/proc/self/status`;
+devuelve `None` fuera de Linux, no rompe nada).
+
+**Aparte, en el arnés de bench** (`bench/harness.py`, `main.py::bench`):
+cada brazo/repetición se persiste en BD según se completa (en vez de
+acumularse en una lista hasta el informe final) — el set es reanudable si
+el proceso muere a mitad, y el informe se reconstruye leyendo de BD en vez
+de depender de tener todo en RAM al final.
+
 ## Analista Funcional (diseño 22-jul-2026, apagado por defecto)
 
 Convierte un reto vago de un empresario no técnico ("mi tienda no vende")

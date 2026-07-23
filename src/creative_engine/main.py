@@ -403,28 +403,24 @@ def bench(set_path: str, output: str | None, no_db: bool) -> None:
             f"· motor {set_config.poblacion_motor}x{set_config.generaciones_motor}\n"
         )
 
-        results = await run_bench_set(set_config, settings)
-
         repo: IdeaRepository | None = None
         if not no_db:
             repo = IdeaRepository()
             try:
                 await repo.initialize()
             except Exception as e:
-                console.print(f"[yellow]PostgreSQL no disponible ({e}); no se persiste.[/yellow]")
+                console.print(
+                    f"[yellow]PostgreSQL no disponible ({e}); no se persiste "
+                    "(sin reanudación posible si el proceso se interrumpe).[/yellow]"
+                )
                 repo = None
 
-        if repo is not None:
-            try:
-                for r in results:
-                    await repo.save_bench_result(
-                        set_name=set_config.name,
-                        challenge=r.challenge,
-                        reto_tipo=r.reto_tipo,
-                        repetition=r.repetition,
-                        arms={k: v.to_dict() for k, v in r.arms.items()},
-                    )
-            finally:
+        try:
+            # Con repo: cada reto/repetición se persiste según se completa
+            # y el set es reanudable si el proceso muere a mitad.
+            results = await run_bench_set(set_config, settings, repository=repo)
+        finally:
+            if repo is not None:
                 await repo.close()
 
         report = render_markdown(results, set_config.name)

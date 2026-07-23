@@ -153,6 +153,138 @@ class TestRunBenchSetEndToEnd:
         assert vago.arms["C"].cost.calls >= vago.arms["B"].cost.calls
 
 
+class _FakeBenchRepository:
+    """Repositorio en memoria: mismo contrato que IdeaRepository para
+    save_bench_result/get_bench_results, sin BD real — permite probar
+    persistencia incremental y reanudación sin red ni Postgres."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def save_bench_result(
+        self, set_name: str, challenge: str, reto_tipo: str, repetition: int, arms: dict
+    ) -> None:
+        self.rows.append(
+            {
+                "set_name": set_name,
+                "challenge": challenge,
+                "reto_tipo": reto_tipo,
+                "repetition": repetition,
+                "arms": arms,
+            }
+        )
+
+    async def get_bench_results(self, set_name: str) -> list[dict]:
+        return [dict(r) for r in self.rows if r["set_name"] == set_name]
+
+
+class TestRunBenchSetPersistenceAndResume:
+    async def test_persists_each_challenge_as_it_completes(self, deterministic_embed) -> None:
+        """Con repository: cada reto/repetición queda en BD antes de que
+        termine el set completo (no solo al final)."""
+        from creative_engine.bench.harness import run_bench_set
+        from creative_engine.core.config import LLMProviderConfig, Settings
+        from creative_engine.core.config import SecretStr as _SecretStr
+        from creative_engine.evolution import encoders as enc
+
+        settings = Settings.load()
+        settings.llm = {"default": LLMProviderConfig(name="sim", api_key=_SecretStr("x"))}
+
+        set_config = BenchSetConfig(
+            name="test_set_persist",
+            domain="generic",
+            retos=[BenchChallenge(texto="Mi tienda online no vende nada", tipo="vago")],
+            repeticiones=2,
+            poblacion_motor=4,
+            generaciones_motor=1,
+            ideas_por_brazo=3,
+        )
+
+        repo = _FakeBenchRepository()
+        orig_embed = enc.IdeaEncoder._embed
+        enc.IdeaEncoder._embed = lambda self, text: deterministic_embed(text)
+        try:
+            with patch(
+                "creative_engine.llm.factory.LLMProvider",
+                side_effect=lambda cfg: _CountingSimProvider(),
+            ):
+                results = await run_bench_set(set_config, settings, repository=repo)
+        finally:
+            enc.IdeaEncoder._embed = orig_embed
+
+        # Las 2 repeticiones quedaron persistidas, no solo devueltas en RAM.
+        assert len(repo.rows) == 2
+        assert {r["repetition"] for r in repo.rows} == {0, 1}
+        assert len(results) == 2
+
+    async def test_resumes_skipping_already_persisted(self, deterministic_embed) -> None:
+        """Si una repetición ya está en BD, run_bench_set no la vuelve a
+        ejecutar — el set es reanudable tras una caída a mitad."""
+        from creative_engine.bench.harness import run_bench_set
+        from creative_engine.core.config import LLMProviderConfig, Settings
+        from creative_engine.core.config import SecretStr as _SecretStr
+        from creative_engine.evolution import encoders as enc
+
+        settings = Settings.load()
+        settings.llm = {"default": LLMProviderConfig(name="sim", api_key=_SecretStr("x"))}
+
+        set_config = BenchSetConfig(
+            name="test_set_resume",
+            domain="generic",
+            retos=[BenchChallenge(texto="Mi tienda online no vende nada", tipo="vago")],
+            repeticiones=2,
+            poblacion_motor=4,
+            generaciones_motor=1,
+            ideas_por_brazo=3,
+        )
+
+        repo = _FakeBenchRepository()
+        # Simula que la repetición 0 ya se completó en una corrida anterior
+        # (p.ej. el proceso murió por OOM justo después de persistirla).
+        await repo.save_bench_result(
+            set_name="test_set_resume",
+            challenge="Mi tienda online no vende nada",
+            reto_tipo="vago",
+            repetition=0,
+            arms={
+                "A": {
+                    "arm": "A_prompt_unico", "n_ideas": 3,
+                    "mean_pairwise_distance": 0.1, "min_pairwise_distance": 0.05,
+                    "blind_utility": 5.0, "cost": {"calls": 1, "prompt_tokens": 10, "completion_tokens": 20},
+                    "elapsed_s": 1.0, "qd_score": None, "coverage": None, "titles": ["x"],
+                },
+                "B": {
+                    "arm": "B_motor_solo", "n_ideas": 3,
+                    "mean_pairwise_distance": 0.1, "min_pairwise_distance": 0.05,
+                    "blind_utility": 5.0, "cost": {"calls": 1, "prompt_tokens": 10, "completion_tokens": 20},
+                    "elapsed_s": 1.0, "qd_score": 0.3, "coverage": 0.1, "titles": ["x"],
+                },
+                "C": {
+                    "arm": "C_motor_analista", "n_ideas": 3,
+                    "mean_pairwise_distance": 0.1, "min_pairwise_distance": 0.05,
+                    "blind_utility": 5.0, "cost": {"calls": 1, "prompt_tokens": 10, "completion_tokens": 20},
+                    "elapsed_s": 1.0, "qd_score": 0.3, "coverage": 0.1, "titles": ["x"],
+                },
+            },
+        )
+
+        orig_embed = enc.IdeaEncoder._embed
+        enc.IdeaEncoder._embed = lambda self, text: deterministic_embed(text)
+        try:
+            with patch(
+                "creative_engine.llm.factory.LLMProvider",
+                side_effect=lambda cfg: _CountingSimProvider(),
+            ):
+                results = await run_bench_set(set_config, settings, repository=repo)
+        finally:
+            enc.IdeaEncoder._embed = orig_embed
+
+        # Solo se ejecutó (y persistió) la repetición 1: la 0 se saltó.
+        assert len(repo.rows) == 2
+        assert {r["repetition"] for r in repo.rows} == {0, 1}
+        assert len(results) == 2
+
+
 def _arm(calls: int, diversity: float, blind: float | None, qd: float | None) -> BenchArmResult:
     return BenchArmResult(
         arm="x",
