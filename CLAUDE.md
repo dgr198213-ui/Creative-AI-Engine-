@@ -278,6 +278,34 @@ El juez de "utilidad ciega" usa el rol `writer` (no participa en la
 generación/evaluación de ningún brazo) y no sabe de qué brazo viene cada
 propuesta ni cómo se generó.
 
+## Diagnóstico de sesgo de longitud en originalidad (Fase 5, bloque 4)
+
+Sospecha detectada en el run `c66010b7` (22-jul-2026): dos ideas
+conceptualmente primas (grafo causal de linajes, corta vs larga)
+puntuaron 100% y 16% de originalidad — posible señal de que el
+descriptor pesa más la longitud del texto que su contenido real.
+
+**Herramienta:** `creative-engine diagnose-length-bias`
+(`evolution/length_bias_diagnostic.py`) codifica pares de mismo-concepto/
+longitud-distinta contra pares de concepto-distinto/longitud-parecida con
+el modelo REAL de embeddings y compara similitudes. Sesgo confirmado si
+los conceptos distintos salen más similares que el mismo concepto en
+longitudes distintas. Hay un test guardia (`test_length_bias_diagnostic.py`)
+que corre lo mismo pero se salta solo sin red (no rompe la regla de suite
+sin red — ver más abajo).
+
+**Estado: SIN CONFIRMAR.** La sesión que implementó el diagnóstico
+(23-jul-2026) no pudo ejecutarlo: este entorno de desarrollo bloquea por
+política de red la descarga de `all-MiniLM-L6-v2` desde Hugging Face
+(`403 Forbidden` en `huggingface.co`, ver salida de
+`creative-engine diagnose-length-bias`). **Pendiente:** ejecutar el
+comando donde SÍ haya red (máquina local del autor, o el contenedor de
+Railway, que ya tiene el modelo cargado) y actualizar este estado con el
+veredicto real. El bloque 4-corrección (normalizar longitud antes de
+codificar) de la Fase 5 sigue sin implementar a propósito hasta tener
+ese veredicto — corregir una métrica sin confirmar el diagnóstico
+invalidaría cualquier benchmark posterior.
+
 ## Convenciones
 
 - Python ≥ 3.12, Pydantic v2, tipos everywhere, ruff limpio.

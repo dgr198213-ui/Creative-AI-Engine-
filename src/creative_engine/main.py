@@ -373,6 +373,41 @@ def doctor(no_llm: bool) -> None:
     asyncio.run(_run())
 
 
+@cli.command(name="diagnose-length-bias")
+def diagnose_length_bias_cmd() -> None:
+    """Diagnóstico: ¿la longitud del texto domina sobre el contenido al
+    codificar ideas? (Fase 5, bloque 4). No usa LLM, pero SÍ el modelo real
+    de embeddings — necesita red la primera vez (descarga sentence-transformers).
+    """
+    from .evolution.length_bias_diagnostic import diagnose_length_bias
+
+    console.print(
+        "\n[bold cyan]🔍 Diagnóstico — sesgo de longitud en originalidad[/bold cyan]\n"
+    )
+    try:
+        result = diagnose_length_bias()
+    except Exception as e:
+        console.print(f"[red]No se pudo ejecutar el diagnóstico: {e}[/red]")
+        console.print(
+            "[yellow]Necesita red para descargar el modelo de embeddings "
+            "(sentence-transformers) la primera vez.[/yellow]"
+        )
+        raise SystemExit(1) from e
+
+    console.print("Mismo concepto, longitud muy distinta:")
+    for sim in result.same_concept_similarities:
+        console.print(f"  similitud: {sim:.3f}")
+    console.print(f"  media: {result.mean_same_concept:.3f}\n")
+
+    console.print("Concepto distinto, longitud parecida:")
+    for sim in result.different_concept_similarities:
+        console.print(f"  similitud: {sim:.3f}")
+    console.print(f"  media: {result.mean_different_concept:.3f}\n")
+
+    color = "red" if result.bias_confirmed else "green"
+    console.print(f"[bold {color}]{result.verdict}[/bold {color}]")
+
+
 @cli.command()
 @click.option(
     "--set",
