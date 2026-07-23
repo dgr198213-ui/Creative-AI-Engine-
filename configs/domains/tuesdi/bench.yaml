@@ -1,0 +1,30 @@
+# Set de retos para medir el pack tuesdi con el arnés de 3 brazos:
+# creative-engine bench --set configs/domains/tuesdi/bench.yaml
+name: tuesdi
+domain: tuesdi
+
+retos:
+  - texto: "Toco en bares pequeños pero nadie fuera de mis amigos viene a verme"
+    tipo: vago
+  - texto: "Subo mi arte a Instagram pero se queda siempre en los mismos 200 likes"
+    tipo: vago
+  - texto: "Publiqué mi primer EP y no consigo que nadie fuera de mi círculo lo escuche"
+    tipo: vago
+  - texto: "No sé cómo cobrar por mis ilustraciones sin que la gente huya del precio"
+    tipo: vago
+  - texto: >
+      Diseña un plan de 3 meses para que un cuarteto de jazz emergente
+      pase de tocar solo para amigos a llenar una sala de 80 personas en
+      su ciudad, con presupuesto de 200 euros al mes para promoción.
+    tipo: control
+  - texto: >
+      Necesito 5 formatos de contenido para que una ilustradora
+      independiente convierta seguidores de redes sociales en
+      compradores recurrentes de estampas firmadas, sin presupuesto de
+      publicidad pagada.
+    tipo: control
+
+repeticiones: 3
+poblacion_motor: 8
+generaciones_motor: 3
+ideas_por_brazo: 8
