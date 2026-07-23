@@ -30,6 +30,14 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 # Logs sin buffering: los timestamps llegan al colector sin retraso.
 ENV PYTHONUNBUFFERED=1
 
+# Domain packs (Fase 6): el paquete se instala vía pip en /usr/local
+# (site-packages), separado de configs/, que vive en /app. La heurística
+# de core/config.py basada en __file__ asume un checkout del repo y no
+# llega hasta aquí — sin esta variable, el registro no encontraba ningún
+# pack y arrancaba en silencio con un solo dominio embebido (incidente
+# de producción 23-jul-2026). Explícito > adivinado.
+ENV CREATIVE_CONFIGS_DIR=/app/configs
+
 # Railway/PaaS asignan el puerto por la variable PORT.
 ENV PORT=8000
 EXPOSE 8000

@@ -186,22 +186,52 @@ class Settings(BaseSettings):
         if redis_url:
             settings.database.redis_url = redis_url
 
-        # Domain packs (Fase 6): arranque RUIDOSO si configs/domains/
-        # existe pero un pack está mal formado — nunca degradación
-        # silenciosa (un dominio "funcionando" con los defaults de otro
-        # es peor que no arrancar). Un configs/domains/ ausente no es un
-        # error: cae al genérico embebido (default_generic_domain), igual
-        # que si el repo se ejecuta sin ningún archivo de configuración.
+        # Domain packs (Fase 6). Incidente de producción (23-jul-2026):
+        # `_CONFIGS_DIR` se calculaba relativo a `__file__` asumiendo un
+        # checkout del repo; el Dockerfile instala el paquete vía `pip
+        # install` (queda en site-packages) y copia `configs/` aparte a
+        # `/app/configs` — los cuatro `.parent` ya no llegaban a
+        # `/app/configs`, así que el escaneo encontraba `configs/domains/`
+        # como si no existiera (ruta equivocada, no ausencia real) y
+        # arrancaba en silencio con un único dominio embebido. Sin log,
+        # sin warning: parecía un arranque normal.
+        # `CREATIVE_CONFIGS_DIR` da control explícito (fijado en el
+        # Dockerfile a `/app/configs`) sin adivinar rutas por heurística.
+        configs_dir_override = os.environ.get("CREATIVE_CONFIGS_DIR")
+        configs_dir = Path(configs_dir_override) if configs_dir_override else _CONFIGS_DIR
+
         try:
-            packs = load_domain_packs(_CONFIGS_DIR)
+            packs = load_domain_packs(configs_dir)
         except DomainPackError as e:
             raise RuntimeError(f"Domain pack mal formado: {e}") from e
+
+        # Arranque RUIDOSO si el escaneo no encuentra NINGÚN pack — ya sea
+        # porque configs/domains/ no existe, está vacío, o (el bug real de
+        # este incidente) la ruta resuelta es la equivocada. Antes esto
+        # caía en silencio al "generic" embebido (default_generic_domain);
+        # ese fallback enmascaró el bug de ruta en producción durante todo
+        # un despliegue sin que ningún log lo delatara. Nunca más: cero
+        # packs es un error de configuración, no un estado válido.
+        if not packs:
+            raise RuntimeError(
+                f"No se encontró ningún domain pack válido en "
+                f"{configs_dir / 'domains'}. El registro de dominios "
+                "necesita al menos uno para arrancar. Si el paquete se "
+                "instaló separado de configs/ (p.ej. vía pip — ver "
+                "Dockerfile), define CREATIVE_CONFIGS_DIR apuntando al "
+                "directorio configs/ real."
+            )
 
         settings._packs = packs
         settings.domains = {name: pack.config for name, pack in packs.items()}
 
-        if "generic" not in settings.domains:
-            settings.domains["generic"] = default_generic_domain()
+        import structlog
+
+        structlog.get_logger(__name__).info(
+            "domains_loaded",
+            packs=sorted(packs),
+            configs_dir=str(configs_dir),
+        )
 
         return settings
 
