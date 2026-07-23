@@ -329,6 +329,24 @@ queda persistido y se muestra en el informe Markdown como columna
 validado en `tests/test_bench.py::TestEqualizedBudget`: A y B no
 difieren más de un 10% en un bench de 1 reto.
 
+## Seguridad de la API pública (Fase 5, bloque 2)
+
+Ya implementado de una auditoría previa, ahora con tests que lo protegen
+de regresión (`tests/test_security.py` — no existían antes de esta fase):
+
+- **`CREATIVE_API_KEY`** (`api/auth.py::ApiKeyMiddleware`): sin ella, la
+  API arranca abierta (uso local/tests); con ella, todo `/api/v1/*`
+  exige `X-API-Key` (o `?api_key=` para enlaces de descarga). Rutas
+  públicas incluso con clave activa: `/health`, `/`, `/static/*`.
+  Añadido en esta fase: log `api_key_not_configured_endpoints_open` al
+  arrancar si la clave no está puesta — antes el estado quedaba mudo
+  hasta auditar a mano.
+- **Cap por run** (`api/guardrails.py::enforce_request_budget`): 422 si
+  `population_size x generations` supera `CREATIVE_EVOLUTION__MAX_REQUESTED_EVALUATIONS`
+  (default 2000, campo `EvolutionConfig.max_requested_evaluations`).
+- **`docs_url`/`redoc_url`/`openapi_url`** en `None` cuando `debug=False`
+  (`api/app.py::create_app`).
+
 ## Convenciones
 
 - Python ≥ 3.12, Pydantic v2, tipos everywhere, ruff limpio.

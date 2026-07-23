@@ -10,9 +10,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .. import __version__
-from ..core.config import get_settings
+from ..core.config import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
+
+
+def _warn_if_api_key_missing(settings: Settings) -> None:
+    """Aviso explícito en el log si /api/v1/* queda sin autenticar.
+
+    Auditoría C1 / Fase 5 bloque 2: sin CREATIVE_API_KEY, la API arranca
+    igual (no rompe uso local/tests) pero deja constancia en el log en
+    vez de un silencio que solo se nota al auditar — importante ahora
+    que terra y luna facturan dinero real.
+    """
+    if not settings.api_key:
+        logger.warning("api_key_not_configured_endpoints_open")
 
 
 @asynccontextmanager
@@ -28,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     settings = get_settings()
     logger.info("starting_creative_engine", debug=settings.debug)
+    _warn_if_api_key_missing(settings)
 
     from ..memory.repository import IdeaRepository
 
