@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 293 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 296 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -465,10 +465,42 @@ los prompts, y prompts que no se pueden formatear.
 **Arranque ruidoso:** un pack con `domain.yaml`/`profile.yaml`/
 `examples.yaml` inválido hace FALLAR `Settings.load()` (nunca se salta
 en silencio — un dominio mal configurado que "funciona" con los
-defaults de otro es peor que no arrancar). Un `configs/domains/`
-ausente por completo sí es válido: cae al "generic" embebido
-(`config.default_generic_domain`), para poder arrancar sin ningún
-archivo de configuración.
+defaults de otro es peor que no arrancar). **Cero packs encontrados
+también hace fallar el arranque** (`RuntimeError`, desde el incidente de
+producción del 23-jul-2026 — ver abajo): ya no existe el fallback
+silencioso al "generic" embebido que había al cerrar la Fase 6.
+
+**Incidente de producción (23-jul-2026): el registro no cargaba ningún
+pack en Railway.** `GET /api/v1/domains` devolvía solo el "generic"
+embebido pese a que `configs/domains/{base,marketing,industrial_design,
+tuesdi}` existían en el contenedor (`ls` lo confirmaba) — sin ningún
+warning ni error en los logs. Causa raíz: `_CONFIGS_DIR` en
+`core/config.py` se calculaba con `Path(__file__).parent x4` asumiendo
+un checkout del repo (`src/creative_engine/core/config.py` → subir 4 →
+raíz del repo). El `Dockerfile` instala el paquete vía `pip install
+--prefix=/install .` (queda en `site-packages` dentro de la imagen
+runtime) y copia `configs/` **aparte** a `/app/configs` — los cuatro
+`.parent` desde `site-packages/creative_engine/core/config.py` no
+llegan ni de lejos a `/app/configs`. El registro interpretó "ruta
+equivocada" como "sin `configs/domains/`", que antes era un caso
+VÁLIDO (fallback a generic) — la ambigüedad entre "no existe" y "ruta
+mal calculada" ocultó el bug durante todo un despliegue.
+
+**Fix (`core/config.py::Settings.load`):**
+1. `CREATIVE_CONFIGS_DIR` (variable de entorno nueva) tiene prioridad
+   sobre la heurística de `__file__` — control explícito en vez de
+   adivinar rutas. Fijada en el `Dockerfile` a `/app/configs`, que es
+   donde el propio Dockerfile ya copia `configs/`.
+2. Cero packs encontrados ahora es SIEMPRE un `RuntimeError` al
+   arrancar (ver arriba) — así una ruta mal resuelta revienta el deploy
+   de inmediato en vez de degradar en silencio a un solo dominio.
+3. Log `domains_loaded` (con la lista de packs) en cada arranque
+   exitoso, para verificar desde logs sin depender de `/api/v1/domains`.
+
+Lección: un fallback "silencioso pero válido" (configs/domains/
+ausente → generic embebido) es exactamente lo que necesita un bug de
+ruta para pasar desapercibido — dos causas indistinguibles (ausencia
+real vs. ruta equivocada) no deben compartir el mismo camino silencioso.
 
 ### Perfil extensible del Analista (D4)
 
@@ -484,8 +516,9 @@ campos declarados), comportamiento idéntico al de siempre.
 `GET /api/v1/domains` devuelve los packs cargados (nombre, título,
 descripción, ejemplos). El panel (`app.js::loadDomains`) construye sus
 chips de dominio y los retos de ejemplo desde ahí al cargar — ya no hay
-dominios fijos en `index.html`. Sin `configs/domains/`, cae a un único
-chip "General" para no dejar el panel sin ámbito seleccionable.
+dominios fijos en `index.html`. El servidor garantiza al menos un pack
+al arrancar (ver "Arranque ruidoso" arriba), así que el endpoint nunca
+necesita un fallback propio.
 
 ### Packs disponibles hoy
 

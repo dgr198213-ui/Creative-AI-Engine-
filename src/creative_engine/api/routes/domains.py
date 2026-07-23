@@ -16,22 +16,12 @@ router = APIRouter()
 
 @router.get("/domains")
 async def list_domains() -> list[dict]:
-    """Domain packs cargados: nombre, título, descripción y ejemplos."""
+    """Domain packs cargados: nombre, título, descripción y ejemplos.
+
+    `Settings.load()` garantiza al menos un pack (arranca con un
+    RuntimeError si el registro no encuentra ninguno — ver
+    `core/config.py`), así que no hace falta un fallback aquí.
+    """
     settings = get_settings()
     packs = settings.list_packs()
-
-    if not packs:
-        # Sin configs/domains/: solo el "generic" embebido está disponible
-        # (default_generic_domain) — el panel debe poder mostrar algo igual.
-        generic = settings.get_domain("generic")
-        return [
-            {
-                "name": generic.name,
-                "pack_name": "generic",
-                "display_name": generic.display_name,
-                "description": generic.description,
-                "examples": [],
-            }
-        ]
-
     return [pack.to_summary_dict() for _, pack in sorted(packs.items())]
