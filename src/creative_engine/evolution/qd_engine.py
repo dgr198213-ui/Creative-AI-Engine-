@@ -26,6 +26,7 @@ from ..agents.generator import IdeaGeneratorAgent
 from ..core.config import get_settings
 from ..core.events import Event, EventType, get_event_bus
 from ..core.exceptions import EvolutionError
+from ..core.memory_utils import current_rss_mb, release_memory
 from ..core.models import (
     DomainConfig,
     EvolutionRequest,
@@ -109,6 +110,7 @@ class QDEngine:
 
     async def run_evolution(self, request: EvolutionRequest) -> EvolutionState:
         """Ejecuta el ciclo evolutivo completo y devuelve el estado final."""
+        rss_start = current_rss_mb()
         domain = self._settings.get_domain(request.domain)
         if request.custom_weights:
             domain = domain.model_copy(update={"evaluation_weights": request.custom_weights})
@@ -348,6 +350,27 @@ class QDEngine:
             self._log.error("evolution_failed", run_id=state.run_id, error=str(e))
             raise EvolutionError(f"Evolución fallida: {e}") from e
         finally:
+            # Nada de esto necesita sobrevivir al run: el archivo MAP-Elites
+            # completo (una celda por cada punto del grid, ocupada o no) ya
+            # se copió a `state.archive` (solo las ocupadas); el contexto de
+            # generación tampoco se usa fuera de este método. Se borran las
+            # referencias ANTES de gc.collect()/malloc_trim para que la
+            # liberación sea real y no un no-op con el frame aún vivo.
+            del archive
+            del context
+            release_memory()
+            rss_end = current_rss_mb()
+            self._log.info(
+                "run_memory_footprint",
+                run_id=state.run_id,
+                rss_start_mb=round(rss_start, 1) if rss_start is not None else None,
+                rss_end_mb=round(rss_end, 1) if rss_end is not None else None,
+                rss_delta_mb=(
+                    round(rss_end - rss_start, 1)
+                    if rss_start is not None and rss_end is not None
+                    else None
+                ),
+            )
             _ctx.unbind_contextvars("run_id")
 
     async def _repo_save_run_status(

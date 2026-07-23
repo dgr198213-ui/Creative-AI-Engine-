@@ -180,6 +180,29 @@ class IdeaEncoder:
         return idea
 
 
+_shared_encoder: IdeaEncoder | None = None
+
+
+def get_shared_encoder(embedding_model: str = _DEFAULT_MODEL) -> IdeaEncoder:
+    """Instancia de IdeaEncoder compartida por todo el proceso servidor.
+
+    Incidente de retención de memoria (22-jul-2026): cada llamada a
+    `/evolution/start` o `/evolution/stream` construía un `IdeaEncoder()`
+    nuevo, que en su primer uso carga sentence-transformers (torch) desde
+    cero — cientos de MB de RSS que los asignadores nativos de torch/MKL NO
+    devuelven al sistema operativo al recolectar el objeto Python (ver
+    `core/memory_utils.py`). Recrearlo run tras run pagaba ese coste una y
+    otra vez sin ninguna ganancia. Se mantiene UNA instancia para todo el
+    proceso a propósito: es memoria cara de recuperar, no una fuga — el
+    objetivo de "la RAM vuelve al baseline tras un run" se mide respecto a
+    este baseline con el encoder ya cargado, no al arranque en frío.
+    """
+    global _shared_encoder
+    if _shared_encoder is None:
+        _shared_encoder = IdeaEncoder(embedding_model=embedding_model)
+    return _shared_encoder
+
+
 class SearchResultScorer:
     """Puntúa similitud entre ideas (para el motor de recomendación)."""
 

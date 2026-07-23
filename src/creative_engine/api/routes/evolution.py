@@ -26,7 +26,7 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
     from ...agents.generator import IdeaGeneratorAgent
     from ...core.config import get_settings
     from ...evolution.crossover import CrossoverEngine
-    from ...evolution.encoders import IdeaEncoder
+    from ...evolution.encoders import get_shared_encoder
     from ...evolution.mutation import MutationEngine
     from ...evolution.qd_engine import QDEngine
     from ...llm.factory import build_router, role_llms
@@ -58,7 +58,7 @@ async def _build_qd_engine(request: Request, on_generation=None) -> QDEngine:
         evaluator=evaluator,
         mutation=MutationEngine(gen_llm, max_concurrent=max_concurrent),
         crossover=CrossoverEngine(gen_llm, max_concurrent=max_concurrent),
-        encoder=IdeaEncoder(),
+        encoder=get_shared_encoder(),
         repository=request.app.state.repository,
         on_generation=on_generation,
     )
