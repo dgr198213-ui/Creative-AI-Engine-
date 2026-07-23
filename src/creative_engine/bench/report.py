@@ -31,6 +31,9 @@ class ArmAggregate:
     mean_calls: float
     mean_prompt_tokens: float
     mean_completion_tokens: float
+    # Presupuesto objetivo (Fase 5, bloque 1): consumo real de B para el
+    # mismo reto. None en B misma (es la referencia, no tiene objetivo).
+    mean_budget_calls: float | None
 
 
 @dataclass
@@ -65,6 +68,9 @@ def aggregate(
             mean_calls=_mean([float(a.cost.calls) for a in arms]) or 0.0,
             mean_prompt_tokens=_mean([float(a.cost.prompt_tokens) for a in arms]) or 0.0,
             mean_completion_tokens=_mean([float(a.cost.completion_tokens) for a in arms]) or 0.0,
+            mean_budget_calls=_mean(
+                [float(a.budget_calls) if a.budget_calls is not None else None for a in arms]
+            ),
         )
     return out
 
@@ -147,15 +153,17 @@ def _fmt(value: float | None, suffix: str = "") -> str:
 
 def _aggregate_table(agg: dict[str, ArmAggregate]) -> list[str]:
     lines = [
-        "| Brazo | Diversidad media | Utilidad ciega (0-10) | QD-Score | Llamadas medias | Tokens medios (prompt+completion) |",
-        "|---|---|---|---|---|---|",
+        "| Brazo | Diversidad media | Utilidad ciega (0-10) | QD-Score | "
+        "Presupuesto objetivo | Llamadas reales | Tokens medios (prompt+completion) |",
+        "|---|---|---|---|---|---|---|",
     ]
     for arm_key, label in ARM_LABELS:
         a = agg[arm_key]
         tokens = a.mean_prompt_tokens + a.mean_completion_tokens
+        budget = f"{a.mean_budget_calls:.1f}" if a.mean_budget_calls is not None else "—"
         lines.append(
             f"| {label} | {_fmt(a.mean_diversity)} | {_fmt(a.mean_blind_utility)} | "
-            f"{_fmt(a.mean_qd_score)} | {a.mean_calls:.1f} | {tokens:.0f} |"
+            f"{_fmt(a.mean_qd_score)} | {budget} | {a.mean_calls:.1f} | {tokens:.0f} |"
         )
     return lines
 

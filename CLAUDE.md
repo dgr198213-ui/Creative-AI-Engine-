@@ -306,6 +306,29 @@ codificar) de la Fase 5 sigue sin implementar a propósito hasta tener
 ese veredicto — corregir una métrica sin confirmar el diagnóstico
 invalidaría cualquier benchmark posterior.
 
+## Presupuesto igualado entre brazos del bench (Fase 5, bloque 1)
+
+La prueba de humo del bench (22-jul) no era concluyente: el brazo A
+gastó 3 llamadas frente a 24 de B y 30 de C. El diseño exigía presupuesto
+igualado; sin él, el criterio 3 (motor > prompt único) medía el motor
+contra un brazo hambriento y cualquier conclusión era inválida.
+
+**Fix (`bench/harness.py`):** B corre PRIMERO en `run_single_challenge`;
+su consumo real de llamadas (`arm_b.cost.calls`) es la referencia de
+presupuesto para A. `_run_arm_a` ya no genera una sola tanda + 1
+auto-mejora: repite rondas de "generar N ideas + auto-mejora" hasta
+agotar ese presupuesto (con un tope de seguridad de rondas para no
+bucear indefinidamente si un proveedor falla sin gastar la llamada
+esperada). C no se fuerza — usa la misma población/generaciones que B,
+así que su coste ya es estructuralmente comparable; solo se le adjunta
+el mismo `budget_calls` para el informe.
+
+`BenchArmResult.budget_calls` (None en B, el consumo real de B en A y C)
+queda persistido y se muestra en el informe Markdown como columna
+"Presupuesto objetivo" junto a "Llamadas reales". Criterio de aceptación
+validado en `tests/test_bench.py::TestEqualizedBudget`: A y B no
+difieren más de un 10% en un bench de 1 reto.
+
 ## Convenciones
 
 - Python ≥ 3.12, Pydantic v2, tipos everywhere, ruff limpio.

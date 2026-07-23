@@ -153,6 +153,103 @@ class TestRunBenchSetEndToEnd:
         assert vago.arms["C"].cost.calls >= vago.arms["B"].cost.calls
 
 
+class TestEqualizedBudget:
+    """Fase 5, bloque 1: A no debe quedarse en un puñado de llamadas
+    frente a las decenas que gasta el motor — repite rondas hasta el
+    presupuesto real de B."""
+
+    async def test_arm_a_matches_arm_b_budget_within_10_percent(
+        self, deterministic_embed
+    ) -> None:
+        from creative_engine.bench.harness import run_bench_set
+        from creative_engine.core.config import LLMProviderConfig, Settings
+        from creative_engine.core.config import SecretStr as _SecretStr
+        from creative_engine.evolution import encoders as enc
+
+        settings = Settings.load()
+        settings.llm = {"default": LLMProviderConfig(name="sim", api_key=_SecretStr("x"))}
+
+        set_config = BenchSetConfig(
+            name="test_set_budget",
+            domain="generic",
+            retos=[BenchChallenge(texto="Mi tienda online no vende nada", tipo="vago")],
+            repeticiones=1,
+            poblacion_motor=6,
+            generaciones_motor=2,
+            ideas_por_brazo=3,
+        )
+
+        orig_embed = enc.IdeaEncoder._embed
+        enc.IdeaEncoder._embed = lambda self, text: deterministic_embed(text)
+        try:
+            with patch(
+                "creative_engine.llm.factory.LLMProvider",
+                side_effect=lambda cfg: _CountingSimProvider(),
+            ):
+                results = await run_bench_set(set_config, settings)
+        finally:
+            enc.IdeaEncoder._embed = orig_embed
+
+        arms = results[0].arms
+        calls_a = arms["A"].cost.calls
+        calls_b = arms["B"].cost.calls
+
+        # Antes del fix, A se quedaba en ~2-3 llamadas fijas frente a las
+        # decenas de B: aquí debe acercarse a las mismas, no a una
+        # fracción mínima.
+        assert calls_a > 5, f"A gastó solo {calls_a} llamadas: no repitió rondas"
+        assert abs(calls_a - calls_b) / calls_b <= 0.10, (
+            f"A ({calls_a}) y B ({calls_b}) difieren más del 10%: presupuesto no igualado"
+        )
+
+        # El informe debe reflejar el objetivo, no solo el gasto real.
+        assert arms["A"].budget_calls == calls_b
+        assert arms["B"].budget_calls is None
+        assert arms["C"].budget_calls == calls_b
+
+    async def test_arm_a_generates_more_than_one_round(self, deterministic_embed) -> None:
+        """Repite rondas de generación+auto-mejora, no solo una vez más."""
+        from creative_engine.bench.harness import _run_arm_a
+        from creative_engine.core.config import LLMProviderConfig, Settings
+        from creative_engine.core.config import SecretStr as _SecretStr
+        from creative_engine.core.models import DomainName
+        from creative_engine.evolution import encoders as enc
+        from creative_engine.llm.factory import build_router, role_llms
+
+        settings = Settings.load()
+        settings.llm = {"default": LLMProviderConfig(name="sim", api_key=_SecretStr("x"))}
+
+        orig_embed = enc.IdeaEncoder._embed
+        enc.IdeaEncoder._embed = lambda self, text: deterministic_embed(text)
+        try:
+            with patch(
+                "creative_engine.llm.factory.LLMProvider",
+                side_effect=lambda cfg: _CountingSimProvider(),
+            ):
+                router = build_router(settings)
+                roles = role_llms(router)
+                domain = settings.get_domain(DomainName.GENERIC)
+                encoder = enc.IdeaEncoder()
+
+                result = await _run_arm_a(
+                    challenge="Mi tienda online no vende nada",
+                    domain=domain,
+                    roles=roles,
+                    encoder=encoder,
+                    router=router,
+                    n_ideas=3,
+                    budget_calls=20,
+                )
+        finally:
+            enc.IdeaEncoder._embed = orig_embed
+
+        # 20 llamadas de presupuesto / 2 llamadas por ronda (generar +
+        # auto-mejora) = 10 rondas => bastantes más de las 3 ideas de 1
+        # ronda sola.
+        assert result.n_ideas > 3
+        assert result.cost.calls >= 18
+
+
 class _FakeBenchRepository:
     """Repositorio en memoria: mismo contrato que IdeaRepository para
     save_bench_result/get_bench_results, sin BD real — permite probar
