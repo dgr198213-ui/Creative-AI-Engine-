@@ -278,6 +278,125 @@ El juez de "utilidad ciega" usa el rol `writer` (no participa en la
 generación/evaluación de ningún brazo) y no sabe de qué brazo viene cada
 propuesta ni cómo se generó.
 
+## Diagnóstico de sesgo de longitud en originalidad (Fase 5, bloque 4)
+
+Sospecha detectada en el run `c66010b7` (22-jul-2026): dos ideas
+conceptualmente primas (grafo causal de linajes, corta vs larga)
+puntuaron 100% y 16% de originalidad — posible señal de que el
+descriptor pesa más la longitud del texto que su contenido real.
+
+**Herramienta:** `creative-engine diagnose-length-bias`
+(`evolution/length_bias_diagnostic.py`) codifica pares de mismo-concepto/
+longitud-distinta contra pares de concepto-distinto/longitud-parecida con
+el modelo REAL de embeddings y compara similitudes. Sesgo confirmado si
+los conceptos distintos salen más similares que el mismo concepto en
+longitudes distintas. Hay un test guardia (`test_length_bias_diagnostic.py`)
+que corre lo mismo pero se salta solo sin red (no rompe la regla de suite
+sin red — ver más abajo).
+
+**Estado: SIN CONFIRMAR.** La sesión que implementó el diagnóstico
+(23-jul-2026) no pudo ejecutarlo: este entorno de desarrollo bloquea por
+política de red la descarga de `all-MiniLM-L6-v2` desde Hugging Face
+(`403 Forbidden` en `huggingface.co`, ver salida de
+`creative-engine diagnose-length-bias`). **Pendiente:** ejecutar el
+comando donde SÍ haya red (máquina local del autor, o el contenedor de
+Railway, que ya tiene el modelo cargado) y actualizar este estado con el
+veredicto real. El bloque 4-corrección (normalizar longitud antes de
+codificar) de la Fase 5 sigue sin implementar a propósito hasta tener
+ese veredicto — corregir una métrica sin confirmar el diagnóstico
+invalidaría cualquier benchmark posterior.
+
+## Presupuesto igualado entre brazos del bench (Fase 5, bloque 1)
+
+La prueba de humo del bench (22-jul) no era concluyente: el brazo A
+gastó 3 llamadas frente a 24 de B y 30 de C. El diseño exigía presupuesto
+igualado; sin él, el criterio 3 (motor > prompt único) medía el motor
+contra un brazo hambriento y cualquier conclusión era inválida.
+
+**Fix (`bench/harness.py`):** B corre PRIMERO en `run_single_challenge`;
+su consumo real de llamadas (`arm_b.cost.calls`) es la referencia de
+presupuesto para A. `_run_arm_a` ya no genera una sola tanda + 1
+auto-mejora: repite rondas de "generar N ideas + auto-mejora" hasta
+agotar ese presupuesto (con un tope de seguridad de rondas para no
+bucear indefinidamente si un proveedor falla sin gastar la llamada
+esperada). C no se fuerza — usa la misma población/generaciones que B,
+así que su coste ya es estructuralmente comparable; solo se le adjunta
+el mismo `budget_calls` para el informe.
+
+`BenchArmResult.budget_calls` (None en B, el consumo real de B en A y C)
+queda persistido y se muestra en el informe Markdown como columna
+"Presupuesto objetivo" junto a "Llamadas reales". Criterio de aceptación
+validado en `tests/test_bench.py::TestEqualizedBudget`: A y B no
+difieren más de un 10% en un bench de 1 reto.
+
+## Seguridad de la API pública (Fase 5, bloque 2)
+
+Ya implementado de una auditoría previa, ahora con tests que lo protegen
+de regresión (`tests/test_security.py` — no existían antes de esta fase):
+
+- **`CREATIVE_API_KEY`** (`api/auth.py::ApiKeyMiddleware`): sin ella, la
+  API arranca abierta (uso local/tests); con ella, todo `/api/v1/*`
+  exige `X-API-Key` (o `?api_key=` para enlaces de descarga). Rutas
+  públicas incluso con clave activa: `/health`, `/`, `/static/*`.
+  Añadido en esta fase: log `api_key_not_configured_endpoints_open` al
+  arrancar si la clave no está puesta — antes el estado quedaba mudo
+  hasta auditar a mano.
+- **Cap por run** (`api/guardrails.py::enforce_request_budget`): 422 si
+  `population_size x generations` supera `CREATIVE_EVOLUTION__MAX_REQUESTED_EVALUATIONS`
+  (default 2000, campo `EvolutionConfig.max_requested_evaluations`).
+- **`docs_url`/`redoc_url`/`openapi_url`** en `None` cuando `debug=False`
+  (`api/app.py::create_app`).
+
+## Guard de presupuesto (Fase 5, bloque 3)
+
+Antes, la estrategia "usar proveedores de pago hasta agotar el
+presupuesto y luego pasar a gratis" era manual: vigilar el usage y
+editar `CREATIVE_ROUTING_SPEC` a mano en el momento justo. Ahora se
+automatiza con la opción B del diseño: **precio por millón de tokens
+configurable por proveedor**, no contador de tokens crudos (mezclaría
+proveedores caros y gratis) ni consulta a la API de usage de cada
+proveedor (acopla a uno concreto). El coste es una ESTIMACIÓN (tokens x
+precio declarado), no la factura real.
+
+**Variables nuevas:**
+- `CREATIVE_LLM__<NOMBRE>__PRICE_IN` / `PRICE_OUT`: USD por millón de
+  tokens de prompt/completion. Sin declarar (0.0 por defecto), el
+  proveedor se trata como gratuito y nunca cuenta para el guard.
+- `CREATIVE_BUDGET_LIMIT`: límite estimado en USD por periodo. `0`
+  (por defecto) = sin límite, el guard nunca degrada (solo contabiliza
+  si hay BD).
+- `CREATIVE_BUDGET_PERIOD`: `monthly` (por defecto) o `daily` — ventana
+  de acumulación del gasto.
+- `CREATIVE_BUDGET_WARNING_RATIO`: umbral de aviso, 0.8 por defecto.
+- `CREATIVE_BUDGET_ENFORCE`: `true` por defecto. En `false`, desactiva
+  la degradación (el routing no cambia) pero la contabilidad y los
+  avisos siguen intactos — escape para casos donde se quiere solo
+  observar el gasto antes de dejar que el guard actúe.
+
+**Comportamiento (`llm/budget.py`):** en cada `/evolution/start` o
+`/evolution/stream`, antes de construir el router
+(`api/routes/evolution.py::_build_qd_engine`), se consulta el gasto
+acumulado del periodo en BD (`get_budget_status`). Si supera
+`CREATIVE_BUDGET_LIMIT` y `CREATIVE_BUDGET_ENFORCE=true`, el router se
+construye SIN los proveedores de pago (`LLMModelRouter(budget_excluded=...)`)
+— el motor sigue funcionando con los gratuitos, nunca falla el run por
+esto salvo que TODOS los proveedores de un rol sean de pago. Al 80% del
+límite, log `budget_warning` sin tocar el routing. Al terminar cada run
+(`_close_and_record_spend`, compartido entre `/start` y `/stream`), se
+persiste el gasto real de los proveedores de pago con
+`record_run_spend` — sin BD, el guard sigue activo dentro del proceso
+por los contadores en memoria del router, pero la acumulación entre
+runs/reinicios necesita persistencia.
+
+**Endpoint:** `GET /api/v1/budget` → `spent_usd`, `limit_usd`, `period`,
+`period_key`, `status` (`ok` | `warning` | `downgraded`),
+`excluded_providers`.
+
+**Pendiente operativo:** rellenar `PRICE_IN`/`PRICE_OUT` para `terra` y
+`luna` en Railway con el precio real de gpt-5.6-sol (y confirmar el
+modelo de `luna`, ver inventario de proveedores) — sin esto, el guard
+los sigue tratando como gratuitos y nunca los excluye.
+
 ## Convenciones
 
 - Python ≥ 3.12, Pydantic v2, tipos everywhere, ruff limpio.
@@ -305,12 +424,12 @@ el routing DEBE actualizar esta tabla y las lecciones de arriba en el mismo
 commit. Las sesiones no comparten contexto entre sí; este archivo es el
 punto de sincronización.
 
-| Nombre    | Servicio        | Modelo             | TYPE   | Coste     |
-|-----------|-----------------|--------------------|--------|-----------|
-| `default` | Gemini (OpenAI-compat) | gemini-flash-latest | —  | Free tier |
-| `zai`     | Z.ai            | glm (flash)        | —      | Free tier |
-| `terra`   | OpenAI (real)   | gpt-5.6-sol        | openai | DE PAGO   |
-| `luna`    | OpenAI (real) — confirmado 22-jul | **sin confirmar** modelo exacto | openai | **sin confirmar** — verificar si es de pago |
+| Nombre    | Servicio        | Modelo             | TYPE   | Coste     | PRICE_IN/OUT (guard presupuesto) |
+|-----------|-----------------|--------------------|--------|-----------|----------------------------------|
+| `default` | Gemini (OpenAI-compat) | gemini-flash-latest | —  | Free tier | sin declarar (gratuito, correcto) |
+| `zai`     | Z.ai            | glm (flash)        | —      | Free tier | sin declarar (gratuito, correcto) |
+| `terra`   | OpenAI (real)   | gpt-5.6-sol        | openai | DE PAGO   | **sin declarar — el guard lo trata como gratuito y nunca lo excluye** |
+| `luna`    | OpenAI (real) — confirmado 22-jul | **sin confirmar** modelo exacto | openai | **sin confirmar** — verificar si es de pago | sin declarar |
 
 **Nota sobre `luna` (actualizado 22-jul-2026):** la auditoría del incidente
 de la segunda noche (P1) confirma que `luna` es OpenAI real: falla con el

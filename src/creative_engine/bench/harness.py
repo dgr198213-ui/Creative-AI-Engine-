@@ -74,6 +74,9 @@ class BenchArmResult:
     qd_score: float | None = None
     coverage: float | None = None
     titles: list[str] = field(default_factory=list)
+    # Presupuesto objetivo en llamadas LLM (Fase 5, bloque 1): el consumo
+    # real del brazo B para este mismo reto. None en B (es la referencia).
+    budget_calls: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -119,6 +122,7 @@ def _row_to_challenge_result(row: dict[str, Any]) -> BenchChallengeResult:
             qd_score=data.get("qd_score"),
             coverage=data.get("coverage"),
             titles=data.get("titles", []),
+            budget_calls=data.get("budget_calls"),
         )
         for key, data in row["arms"].items()
     }
@@ -151,6 +155,7 @@ def _arm_metrics(
     blind_utility: float | None,
     qd_score: float | None = None,
     coverage: float | None = None,
+    budget_calls: int | None = None,
 ) -> BenchArmResult:
     mean_d, min_d = pairwise_diversity(ideas)
     return BenchArmResult(
@@ -164,6 +169,7 @@ def _arm_metrics(
         qd_score=round(qd_score, 3) if qd_score is not None else None,
         coverage=round(coverage, 4) if coverage is not None else None,
         titles=[i.title for i in ideas],
+        budget_calls=budget_calls,
     )
 
 
@@ -191,24 +197,48 @@ async def _run_arm_a(
     encoder: IdeaEncoder,
     router: LLMModelRouter,
     n_ideas: int,
+    budget_calls: int,
 ) -> BenchArmResult:
-    """Brazo A: prompt único + 1 pasada de auto-mejora."""
+    """Brazo A: prompt único, repartido en rondas de respuestas
+    independientes + auto-mejora hasta agotar `budget_calls` (Fase 5,
+    bloque 1 — el consumo real del brazo B para este mismo reto).
+
+    Antes A gastaba un puñado fijo de llamadas (generar + 1 auto-mejora)
+    frente a las decenas que gasta el motor evolutivo: cualquier
+    comparación de diversidad/utilidad medía un brazo hambriento contra
+    uno bien alimentado. Repetir rondas hasta el mismo presupuesto real
+    hace la comparación válida.
+    """
     calls_before = router.total_calls
     tokens_before = router.total_tokens
     t0 = time.perf_counter()
 
     generator = IdeaGeneratorAgent(roles["generator"])
-    ideas = await generator.generate_population(
-        challenge=challenge, domain=domain, count=n_ideas
-    )
-    ideas = await generator.refine_population(challenge=challenge, domain=domain, ideas=ideas)
-    for idea in ideas:
+    all_ideas: list[Idea] = []
+    # Tope de seguridad: como máximo una ronda por llamada de presupuesto,
+    # para no bucear indefinidamente si algún proveedor falla sin llegar
+    # a gastar la llamada que se le atribuye (no debería, es solo cinturón).
+    max_rounds = max(1, budget_calls)
+    rounds = 0
+    while router.total_calls - calls_before < budget_calls and rounds < max_rounds:
+        batch = await generator.generate_population(
+            challenge=challenge, domain=domain, count=n_ideas
+        )
+        batch = await generator.refine_population(
+            challenge=challenge, domain=domain, ideas=batch
+        )
+        all_ideas.extend(batch)
+        rounds += 1
+
+    for idea in all_ideas:
         encoder.encode_idea(idea, domain)
 
     elapsed = time.perf_counter() - t0
     cost = _cost_delta(router, calls_before, tokens_before)
-    blind = await judge_blind(roles["writer"], challenge, ideas)
-    return _arm_metrics("A_prompt_unico", ideas, cost, elapsed, blind)
+    blind = await judge_blind(roles["writer"], challenge, all_ideas)
+    return _arm_metrics(
+        "A_prompt_unico", all_ideas, cost, elapsed, blind, budget_calls=budget_calls
+    )
 
 
 async def _run_arm_b(
@@ -256,8 +286,15 @@ async def _run_arm_c(
     n_ideas: int,
     population: int,
     generations: int,
+    budget_calls: int | None = None,
 ) -> BenchArmResult:
-    """Brazo C: motor + Analista (su llamada cuenta en el presupuesto)."""
+    """Brazo C: motor + Analista (su llamada cuenta en el presupuesto).
+
+    `budget_calls` (consumo real de B) se adjunta solo para el informe —
+    a diferencia de A, no se fuerza: C usa la misma población/generaciones
+    que B, así que su coste ya es estructuralmente comparable sin
+    necesidad de repetir rondas.
+    """
     calls_before = router.total_calls
     tokens_before = router.total_tokens
     t0 = time.perf_counter()
@@ -283,7 +320,7 @@ async def _run_arm_c(
     blind = await judge_blind(roles["writer"], challenge, ideas)
     return _arm_metrics(
         "C_motor_analista", ideas, cost, elapsed, blind,
-        qd_score=state.qd_score, coverage=state.coverage,
+        qd_score=state.qd_score, coverage=state.coverage, budget_calls=budget_calls,
     )
 
 
@@ -297,17 +334,24 @@ async def run_single_challenge(
     set_config: BenchSetConfig,
     encoder: IdeaEncoder,
 ) -> BenchChallengeResult:
-    """Ejecuta los 3 brazos, mismo reto y misma repetición."""
-    arm_a = await _run_arm_a(
-        challenge, domain, roles, encoder, router, set_config.ideas_por_brazo
-    )
+    """Ejecuta los 3 brazos, mismo reto y misma repetición.
+
+    B corre PRIMERO: su consumo real de llamadas LLM es la referencia de
+    presupuesto para A (Fase 5, bloque 1) — sin esto A gastaba una
+    fracción mínima de lo que gasta el motor y la comparación era inválida.
+    """
     arm_b = await _run_arm_b(
         challenge, domain, roles, encoder, router,
         set_config.ideas_por_brazo, set_config.poblacion_motor, set_config.generaciones_motor,
     )
+    arm_a = await _run_arm_a(
+        challenge, domain, roles, encoder, router,
+        set_config.ideas_por_brazo, budget_calls=arm_b.cost.calls,
+    )
     arm_c = await _run_arm_c(
         challenge, domain, roles, encoder, router,
         set_config.ideas_por_brazo, set_config.poblacion_motor, set_config.generaciones_motor,
+        budget_calls=arm_b.cost.calls,
     )
 
     return BenchChallengeResult(

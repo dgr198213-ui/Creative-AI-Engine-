@@ -36,6 +36,16 @@ class LLMProviderConfig(BaseModel):
     # el modo razonador de los GLM de Z.ai (lentísimo en free tier):
     # CREATIVE_LLM__ZAI__EXTRA_BODY={"thinking":{"type":"disabled"}}
     extra_body: dict = Field(default_factory=dict)
+    # Precio por millón de tokens (Fase 5, bloque 3 — guard de presupuesto
+    # opción B): distingue lo que cuesta dinero de lo que no, que es la
+    # decisión que el guard tiene que tomar. Sin precio declarado (0.0), el
+    # proveedor se trata como gratuito y nunca cuenta para el guard.
+    price_in: float = Field(default=0.0, ge=0.0)  # USD / 1M tokens de prompt
+    price_out: float = Field(default=0.0, ge=0.0)  # USD / 1M tokens de completion
+
+    @property
+    def is_paid(self) -> bool:
+        return self.price_in > 0.0 or self.price_out > 0.0
 
 
 class DatabaseConfig(BaseModel):
@@ -109,6 +119,19 @@ class Settings(BaseSettings):
     # apagado — el flujo actual (reto → motor directo) no se toca. Con esto
     # en false, POST /api/v1/analyze responde 404.
     analyst_enabled: bool = False
+
+    # ── Guard de presupuesto (Fase 5, bloque 3, opción B) ────────────
+    # Límite estimado en USD por periodo. 0 = sin límite (el guard no
+    # degrada nunca; el gasto se sigue contabilizando si hay BD).
+    budget_limit: float = Field(default=0.0, ge=0.0)
+    # "monthly" (por defecto) o "daily" — ventana de acumulación del gasto.
+    budget_period: str = "monthly"
+    # Umbral de aviso (log budget_warning, sin tocar el routing).
+    budget_warning_ratio: float = Field(default=0.8, ge=0.0, le=1.0)
+    # Escape: desactiva la DEGRADACIÓN automática a proveedores gratuitos
+    # al superar el límite, sin perder la contabilidad (se sigue sumando
+    # gasto y avisando). CREATIVE_BUDGET_ENFORCE=false para desactivarla.
+    budget_enforce: bool = True
 
     llm: dict[str, LLMProviderConfig] = Field(default_factory=dict)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)

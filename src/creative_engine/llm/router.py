@@ -96,11 +96,17 @@ class LLMModelRouter:
         self,
         providers: dict[str, LLMProvider],
         routing: dict[str, list[str]] | None = None,
+        budget_excluded: set[str] | None = None,
     ) -> None:
         if not providers:
             raise LLMError("LLMModelRouter requiere al menos un proveedor")
 
         self._providers = providers
+        # Guard de presupuesto (Fase 5, bloque 3): proveedores de pago
+        # excluidos de TODAS las cadenas porque el gasto estimado del
+        # periodo superó CREATIVE_BUDGET_LIMIT — decidido antes de
+        # construir el router (llm/budget.py::get_budget_status), no aquí.
+        self._budget_excluded: set[str] = set(budget_excluded or ())
         # Cadena por defecto: TODOS los proveedores en orden de definición.
         # Así, aunque no haya routing configurado, tener un segundo proveedor
         # ya da failover automático ante saturación del primero.
@@ -140,6 +146,11 @@ class LLMModelRouter:
         return RoledLLM(self, role)
 
     @property
+    def providers(self) -> dict[str, LLMProvider]:
+        """Proveedores instanciados por nombre (para contabilidad de gasto)."""
+        return self._providers
+
+    @property
     def total_calls(self) -> int:
         """Llamadas lógicas acumuladas en todos los proveedores del router.
 
@@ -173,11 +184,19 @@ class LLMModelRouter:
         last_error: Exception | None = None
         attempted_any = False
 
-        candidates = [name for name in chain if name not in self._disabled_for_run]
+        candidates = [
+            name
+            for name in chain
+            if name not in self._disabled_for_run and name not in self._budget_excluded
+        ]
         if not candidates:
+            reason = (
+                "excluidos por presupuesto agotado"
+                if all(name in self._budget_excluded for name in chain)
+                else "deshabilitados para este run (400 invalid_request_error)"
+            )
             raise LLMError(
-                f"Todos los proveedores del rol '{role}' están deshabilitados "
-                f"para este run (400 invalid_request_error): {chain}",
+                f"Todos los proveedores del rol '{role}' están {reason}: {chain}",
                 details={"role": role, "chain": chain},
             )
         now = time.monotonic()
