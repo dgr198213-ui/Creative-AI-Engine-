@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .core.config import get_settings
-from .core.models import DomainName, EvolutionRequest, EvolutionState
+from .core.models import EvolutionRequest, EvolutionState
 
 console = Console()
 
@@ -60,7 +60,8 @@ def serve(host: str, port: int) -> None:
 @click.option(
     "--domain",
     default="generic",
-    type=click.Choice([d.value for d in DomainName]),
+    help="Nombre de un domain pack (configs/domains/<nombre>/). "
+    "Ver `creative-engine domain list`.",
 )
 @click.option("--population", default=20, type=int, help="Tamaño de población")
 @click.option("--generations", default=5, type=int, help="Número de generaciones")
@@ -122,7 +123,7 @@ def evolve(challenge: str, domain: str, population: int, generations: int, no_db
 
             request = EvolutionRequest(
                 challenge=challenge,
-                domain=DomainName(domain),
+                domain=domain,
                 population_size=population,
                 generations=generations,
             )
@@ -194,7 +195,7 @@ if __name__ == "__main__":
 @click.option(
     "--domain",
     default="generic",
-    type=click.Choice([d.value for d in DomainName]),
+    help="Nombre de un domain pack (configs/domains/<nombre>/).",
 )
 @click.option("--ideas", default=12, type=int, help="Ideas por brazo a comparar")
 @click.option("--population", default=12, type=int, help="Población del motor QD")
@@ -234,7 +235,7 @@ def benchmark(
 
         router = build_router(settings)
         roles = role_llms(router)
-        domain_cfg = settings.get_domain(DomainName(domain))
+        domain_cfg = settings.get_domain(domain)
 
         console.print("\n[bold cyan]⚖️  Benchmark — Motor QD vs Prompt Único[/bold cyan]")
         console.print(f"   Reto: {challenge[:80]}")
@@ -406,6 +407,64 @@ def diagnose_length_bias_cmd() -> None:
 
     color = "red" if result.bias_confirmed else "green"
     console.print(f"[bold {color}]{result.verdict}[/bold {color}]")
+
+
+@cli.group()
+def domain() -> None:
+    """Domain packs (Fase 6): listar y validar configs/domains/<nombre>/."""
+
+
+@domain.command(name="list")
+def domain_list() -> None:
+    """Lista los domain packs cargados (nombre, display_name, ejemplos)."""
+    settings = get_settings()
+    packs = settings.list_packs()
+
+    if not packs:
+        console.print(
+            "[yellow]Sin domain packs en configs/domains/ — solo el 'generic' "
+            "embebido está disponible.[/yellow]"
+        )
+        return
+
+    table = Table(title="Domain packs")
+    table.add_column("Nombre")
+    table.add_column("Pack (directorio)")
+    table.add_column("Título")
+    table.add_column("Ejemplos")
+    for name, pack in sorted(packs.items()):
+        table.add_row(name, pack.pack_name, pack.config.display_name, str(len(pack.examples)))
+    console.print(table)
+
+
+@domain.command(name="validate")
+@click.argument("pack_dir", type=click.Path(exists=True, file_okay=False))
+def domain_validate(pack_dir: str) -> None:
+    """Valida un domain pack: esquema, prompts y ejemplos.
+
+    PACK_DIR es la ruta al directorio del pack, p.ej.
+    configs/domains/tuesdi. Detecta esquema inválido en domain.yaml,
+    placeholders desconocidos en prompts/*.md, y prompts que no se
+    pueden formatear con {reto}/{perfil}/{inspiraciones}.
+    """
+    from pathlib import Path
+
+    from .core.domain_registry import BASE_PACK_NAME, validate_pack
+
+    directory = Path(pack_dir).resolve()
+    base_dir = directory.parent / BASE_PACK_NAME
+    base_dir = base_dir if base_dir.is_dir() and base_dir != directory else None
+
+    problems = validate_pack(directory, base_dir)
+
+    if not problems:
+        console.print(f"[bold green]✓ Pack '{directory.name}' válido[/bold green]")
+        return
+
+    console.print(f"[bold red]✗ Pack '{directory.name}' tiene {len(problems)} problema(s):[/bold red]")
+    for problem in problems:
+        console.print(f"  - {problem}")
+    raise SystemExit(1)
 
 
 @cli.command()

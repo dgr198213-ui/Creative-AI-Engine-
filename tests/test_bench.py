@@ -212,7 +212,6 @@ class TestEqualizedBudget:
         from creative_engine.bench.harness import _run_arm_a
         from creative_engine.core.config import LLMProviderConfig, Settings
         from creative_engine.core.config import SecretStr as _SecretStr
-        from creative_engine.core.models import DomainName
         from creative_engine.evolution import encoders as enc
         from creative_engine.llm.factory import build_router, role_llms
 
@@ -228,7 +227,7 @@ class TestEqualizedBudget:
             ):
                 router = build_router(settings)
                 roles = role_llms(router)
-                domain = settings.get_domain(DomainName.GENERIC)
+                domain = settings.get_domain("generic")
                 encoder = enc.IdeaEncoder()
 
                 result = await _run_arm_a(

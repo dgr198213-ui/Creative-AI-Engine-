@@ -34,7 +34,7 @@ from ..agents.generator import IdeaGeneratorAgent
 from ..analysis.analyst import FunctionalAnalystAgent
 from ..benchmark import pairwise_diversity
 from ..core.config import Settings
-from ..core.models import DomainConfig, DomainName, EvolutionRequest, Idea
+from ..core.models import DomainConfig, EvolutionRequest, Idea
 from ..evolution.crossover import CrossoverEngine
 from ..evolution.encoders import IdeaEncoder
 from ..evolution.mutation import MutationEngine
@@ -380,7 +380,7 @@ async def run_bench_set(
     """
     router = build_router(settings)
     roles = role_llms(router)
-    domain = settings.get_domain(DomainName(set_config.domain))
+    domain = settings.get_domain(set_config.domain)
     # Instancia única: el modelo de embeddings se carga una sola vez para
     # todo el set, no por brazo/repetición.
     encoder = IdeaEncoder()

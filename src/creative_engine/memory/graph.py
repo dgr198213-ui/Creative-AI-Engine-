@@ -69,7 +69,7 @@ class IdeaKnowledgeGraph:
         params = {
             "id": idea.id,
             "title": idea.title,
-            "domain": idea.domain.value,
+            "domain": idea.domain,
             "fitness": idea.fitness,
             "generation": idea.generation,
             "novelty": idea.evaluation.novelty if idea.evaluation else 0.0,

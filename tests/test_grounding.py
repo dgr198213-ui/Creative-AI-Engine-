@@ -62,7 +62,7 @@ class TestEngineIntegration:
         from creative_engine.agents.evaluator_orchestrator import EvaluatorOrchestrator
         from creative_engine.agents.generator import IdeaGeneratorAgent
         from creative_engine.core.config import reset_settings
-        from creative_engine.core.models import DomainName, EvolutionRequest
+        from creative_engine.core.models import EvolutionRequest
         from creative_engine.evolution import encoders as enc
         from creative_engine.evolution.crossover import CrossoverEngine
         from creative_engine.evolution.encoders import IdeaEncoder
@@ -132,7 +132,7 @@ class TestEngineIntegration:
         await engine.run_evolution(
             EvolutionRequest(
                 challenge=challenge,
-                domain=DomainName.GENERIC,
+                domain="generic",
                 population_size=4,
                 generations=1,
             )
@@ -153,7 +153,7 @@ class TestEngineIntegration:
         from creative_engine.agents.evaluator_orchestrator import EvaluatorOrchestrator
         from creative_engine.agents.generator import IdeaGeneratorAgent
         from creative_engine.core.config import reset_settings
-        from creative_engine.core.models import DomainName, EvolutionRequest
+        from creative_engine.core.models import EvolutionRequest
         from creative_engine.evolution import encoders as enc
         from creative_engine.evolution.crossover import CrossoverEngine
         from creative_engine.evolution.encoders import IdeaEncoder
@@ -214,7 +214,7 @@ class TestEngineIntegration:
         state = await engine.run_evolution(
             EvolutionRequest(
                 challenge="Movilidad urbana sostenible e innovadora",
-                domain=DomainName.GENERIC,
+                domain="generic",
                 population_size=4,
                 generations=1,
             )

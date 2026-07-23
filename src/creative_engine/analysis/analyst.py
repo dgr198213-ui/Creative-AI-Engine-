@@ -13,10 +13,12 @@ from typing import Any
 
 import structlog
 
+from ..core.domain_registry import format_domain_prompt
 from ..core.models import (
     ChallengeFriction,
     ChallengeProfile,
     ChallengeTopography,
+    DomainConfig,
     FunctionalHypothesis,
 )
 from ..llm.provider import LLMProvider
@@ -72,7 +74,7 @@ Responde SOLO con este JSON (mismas claves, mismos tipos):
   }},
   "restricciones_duras": ["restricciones explícitas o muy probables, si las hay"],
   "reto_reformulado": "el reto técnico que recibirá el motor de generación de ideas",
-  "preguntas_pendientes": ["máx 2, solo si tu confianza es < 0.6"]
+  "preguntas_pendientes": ["máx 2, solo si tu confianza es < 0.6"]{dominio_block}
 }}"""
 
 _CORRECTION_BLOCK = """
@@ -102,6 +104,20 @@ def _safe_str_list(value: Any, max_items: int | None = None) -> list[str]:
     return items[:max_items] if max_items else items
 
 
+def _dominio_schema_block(profile_fields: list[dict[str, str]]) -> str:
+    """Bloque JSON extra del esquema para los campos de dominio (D4, Fase 6).
+
+    Vacío si el pack no declara `profile_fields` — el Analista no cambia
+    de comportamiento para dominios sin extensión de perfil.
+    """
+    if not profile_fields:
+        return ""
+    campos = ",\n".join(
+        f'    "{f["nombre"]}": "{f.get("descripcion") or f["nombre"]}"' for f in profile_fields
+    )
+    return ",\n  \"dominio\": {\n" + campos + "\n  }"
+
+
 class FunctionalAnalystAgent:
     """Perfila un reto en una sola llamada LLM estructurada."""
 
@@ -112,10 +128,16 @@ class FunctionalAnalystAgent:
     async def analyze(
         self,
         challenge: str,
+        domain: DomainConfig | None = None,
         correction: str | None = None,
         previous_profile: ChallengeProfile | None = None,
     ) -> ChallengeProfile:
         """Produce el perfil funcional de un reto (o su v2 tras una corrección).
+
+        `domain` (opcional, D4 Fase 6): si el pack declara `profile_fields`,
+        el esquema JSON se extiende con un bloque `dominio` y la respuesta
+        se recoge en `ChallengeProfile.dominio`. Sin domain (o sin campos
+        declarados), comportamiento idéntico al de siempre.
 
         Degrada con elegancia si la llamada LLM falla: devuelve un perfil
         mínimo (reto_reformulado = reto_original) en vez de propagar la
@@ -131,13 +153,20 @@ class FunctionalAnalystAgent:
                 correction=correction,
             )
 
+        profile_fields = domain.profile_fields if domain is not None else []
         prompt = ANALYST_PROMPT.format(
-            challenge=challenge, correction_block=correction_block
+            challenge=challenge,
+            correction_block=correction_block,
+            dominio_block=_dominio_schema_block(profile_fields),
+        )
+        system_prompt = format_domain_prompt(
+            (domain.analyst_prompt if domain is not None else "") or ANALYST_SYSTEM,
+            reto=challenge,
         )
 
         try:
             data = await self._llm.generate_structured(
-                prompt=prompt, system_prompt=ANALYST_SYSTEM
+                prompt=prompt, system_prompt=system_prompt
             )
         except Exception as e:
             self._log.error("analysis_failed", error=str(e))
@@ -148,7 +177,9 @@ class FunctionalAnalystAgent:
         )
         version = (previous_profile.version + 1) if previous_profile is not None else 1
 
-        profile = self._parse(data, reto_original=reto_original, version=version)
+        profile = self._parse(
+            data, reto_original=reto_original, version=version, profile_fields=profile_fields
+        )
         self._log.info(
             "profile_generated",
             version=profile.version,
@@ -157,7 +188,13 @@ class FunctionalAnalystAgent:
         )
         return profile
 
-    def _parse(self, data: dict[str, Any], reto_original: str, version: int) -> ChallengeProfile:
+    def _parse(
+        self,
+        data: dict[str, Any],
+        reto_original: str,
+        version: int,
+        profile_fields: list[dict[str, str]] | None = None,
+    ) -> ChallengeProfile:
         topografia_data = data.get("topografia") or {}
         hipotesis_data = data.get("hipotesis_funcional") or {}
         friccion_data = data.get("friccion") or {}
@@ -198,6 +235,14 @@ class FunctionalAnalystAgent:
             else []
         )
 
+        dominio_data = data.get("dominio")
+        dominio: dict[str, Any] = {}
+        if profile_fields and isinstance(dominio_data, dict):
+            for field in profile_fields:
+                nombre = field["nombre"]
+                if nombre in dominio_data and dominio_data[nombre] is not None:
+                    dominio[nombre] = str(dominio_data[nombre])
+
         return ChallengeProfile(
             version=version,
             reto_original=reto_original,
@@ -207,4 +252,5 @@ class FunctionalAnalystAgent:
             restricciones_duras=_safe_str_list(data.get("restricciones_duras")),
             reto_reformulado=str(data.get("reto_reformulado") or reto_original),
             preguntas_pendientes=preguntas,
+            dominio=dominio,
         )

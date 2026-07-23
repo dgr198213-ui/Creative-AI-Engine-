@@ -16,12 +16,16 @@ from typing import Any
 
 import structlog
 
+from ..core.domain_registry import format_domain_prompt
 from ..core.models import Idea
 from ..llm.provider import LLMProvider
 from .base import AgentResult, BaseAgent
 
 logger = structlog.get_logger(__name__)
 
+# Fallback si el domain pack no trae evaluator_prompt (rúbrica en
+# lenguaje del dominio, Fase 6 D3) ni hereda uno de "base" — el motor no
+# debe depender de que exista (ver domain_registry.load_pack).
 COMBINED_SYSTEM = """Eres un comité de tres expertos que evalúa ideas creativas:
 - Un estratega de innovación (juzga la UTILIDAD: ¿resuelve un dolor real?)
 - Un ingeniero senior (juzga la VIABILIDAD técnica con tecnología actual)
@@ -61,6 +65,7 @@ class CombinedEvaluatorAgent(BaseAgent):
         self, idea: Idea, context: dict[str, Any] | None = None
     ) -> AgentResult:
         context = context or {}
+        challenge = context.get("challenge", "")
         profile_hint = context.get("profile_hint") or ""
         prompt = COMBINED_PROMPT.format(
             title=idea.title,
@@ -68,13 +73,18 @@ class CombinedEvaluatorAgent(BaseAgent):
             advantages="\n".join(f"- {a}" for a in idea.advantages) or "—",
             technologies=", ".join(idea.features.technologies) or "No especificadas",
             markets=", ".join(idea.features.target_markets) or "No especificados",
-            challenge=context.get("challenge", ""),
+            challenge=challenge,
             profile_block=f"Perfil del reto (Analista Funcional): {profile_hint}\n" if profile_hint else "",
+        )
+        system_prompt = format_domain_prompt(
+            context.get("evaluator_prompt") or COMBINED_SYSTEM,
+            reto=challenge,
+            perfil=profile_hint,
         )
 
         try:
             data = await self._llm.generate_structured(
-                prompt=prompt, system_prompt=COMBINED_SYSTEM
+                prompt=prompt, system_prompt=system_prompt
             )
 
             def _score(key: str) -> float:

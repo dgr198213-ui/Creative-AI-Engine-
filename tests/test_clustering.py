@@ -2,7 +2,7 @@
 
 import pytest
 
-from creative_engine.core.models import DomainName, EvaluationScores, Idea, IdeaStatus
+from creative_engine.core.models import EvaluationScores, Idea, IdeaStatus
 from creative_engine.evolution.clustering import group_into_families
 
 
@@ -11,7 +11,7 @@ def make_elite(title: str, descriptor: list[float], utility: float = 0.7) -> Ide
         title=title,
         description=f"Descripción de {title} suficientemente larga para validar.",
         status=IdeaStatus.ELITE,
-        domain=DomainName.GENERIC,
+        domain="generic",
     )
     idea.evaluation = EvaluationScores(utility=utility, feasibility=0.6, market_fit=0.5)
     idea.behavior_descriptor = descriptor

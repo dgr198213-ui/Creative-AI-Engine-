@@ -21,7 +21,7 @@ from creative_engine.api.auth import ApiKeyMiddleware
 from creative_engine.api.guardrails import enforce_request_budget
 from creative_engine.core import config
 from creative_engine.core.config import Settings
-from creative_engine.core.models import DomainName, EvolutionRequest
+from creative_engine.core.models import EvolutionRequest
 
 
 def _make_test_app() -> FastAPI:
@@ -155,7 +155,7 @@ class TestEvolutionBudgetCap:
         config._settings = None  # usa el cap por defecto (2000)
         request = EvolutionRequest(
             challenge="Un reto de prueba con longitud suficiente para validar",
-            domain=DomainName.GENERIC,
+            domain="generic",
             population_size=500,
             generations=200,  # 500 x 200 = 100.000 evaluaciones, muy por encima del cap
         )
@@ -167,7 +167,7 @@ class TestEvolutionBudgetCap:
         config._settings = None
         request = EvolutionRequest(
             challenge="Un reto de prueba con longitud suficiente para validar",
-            domain=DomainName.GENERIC,
+            domain="generic",
             population_size=10,
             generations=5,  # 50 evaluaciones, muy por debajo del cap
         )

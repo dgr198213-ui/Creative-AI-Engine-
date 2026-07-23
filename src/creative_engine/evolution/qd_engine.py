@@ -157,7 +157,7 @@ class QDEngine:
             "evolution_started",
             run_id=state.run_id,
             challenge=request.challenge[:80],
-            domain=request.domain.value,
+            domain=request.domain,
             grid_shape=domain.grid_shape,
             generations=state.total_generations,
             pop_size=state.population_size,
@@ -169,7 +169,7 @@ class QDEngine:
                 data={
                     "run_id": state.run_id,
                     "challenge": request.challenge[:100],
-                    "domain": request.domain.value,
+                    "domain": request.domain,
                 },
                 source="QDEngine",
             )
@@ -181,6 +181,9 @@ class QDEngine:
             "custom_weights": request.custom_weights,
             "run_id": state.run_id,
             "profile_hint": profile_hint,
+            # Rúbrica del dominio (D3, Fase 6): el evaluador la usa como
+            # system prompt si el pack la declara; si no, cae a su default.
+            "evaluator_prompt": domain.evaluator_prompt,
         }
 
         try:
@@ -385,7 +388,7 @@ class QDEngine:
                 status=state.status,
                 error=state.error,
                 challenge=request.challenge,
-                domain=request.domain.value,
+                domain=request.domain,
             )
         except Exception as e:
             self._log.warning("run_status_persist_failed", run_id=state.run_id, error=str(e))
