@@ -8,10 +8,19 @@ from typing import Any
 
 import structlog
 
+from ..core.domain_registry import format_domain_prompt
 from ..core.models import DomainConfig, Idea, IdeaFeatures, IdeaStatus, ValueHypothesis
 from ..llm.provider import LLMProvider
 
 logger = structlog.get_logger(__name__)
+
+# Fallback si el pack no trae generator_prompt ni hereda uno de "base"
+# (no debería pasar en un despliegue normal, pero el motor no debe
+# depender de que exista — ver domain_registry.load_pack).
+_DEFAULT_GENERATOR_PROMPT = (
+    "Eres un experto en innovación y creatividad computacional. Generas "
+    "ideas prácticas, novedosas y viables para el reto planteado."
+)
 
 GENERATION_PROMPT = """Genera {count} ideas creativas y diferentes para el siguiente reto:
 
@@ -63,6 +72,11 @@ class IdeaGeneratorAgent:
     def __init__(self, llm: LLMProvider) -> None:
         self._llm = llm
         self._log = logger.bind(agent="generator")
+
+    @staticmethod
+    def _system_prompt(domain: DomainConfig, challenge: str, variation_hint: str = "") -> str:
+        template = domain.generator_prompt or _DEFAULT_GENERATOR_PROMPT
+        return format_domain_prompt(template, reto=challenge, inspiraciones=variation_hint)
 
     async def generate_population(
         self,
@@ -128,7 +142,7 @@ class IdeaGeneratorAgent:
         try:
             raw = await self._llm.generate(
                 prompt=prompt,
-                system_prompt=domain.system_prompt,
+                system_prompt=self._system_prompt(domain, challenge),
                 temperature=0.5,
                 max_tokens=4096,
             )
@@ -155,7 +169,7 @@ class IdeaGeneratorAgent:
 
         raw = await self._llm.generate(
             prompt=prompt,
-            system_prompt=domain.system_prompt,
+            system_prompt=self._system_prompt(domain, challenge, variation_hint),
             temperature=0.9,  # alta temperatura → máxima diversidad inicial
             max_tokens=4096,
         )

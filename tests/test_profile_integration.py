@@ -16,7 +16,6 @@ from creative_engine.core.models import (
     ChallengeFriction,
     ChallengeProfile,
     ChallengeTopography,
-    DomainName,
     EvolutionRequest,
     FunctionalHypothesis,
 )
@@ -105,7 +104,7 @@ async def test_without_profile_uses_challenge_as_is(deterministic_embed) -> None
     engine = _build_engine(llm, IdeaEncoder(embed_fn=deterministic_embed))
     request = EvolutionRequest(
         challenge="Mi tienda online no vende nada desde hace semanas",
-        domain=DomainName.GENERIC,
+        domain="generic",
         population_size=4,
         generations=1,
     )
@@ -140,7 +139,7 @@ async def test_with_profile_generates_on_reformulated_challenge(deterministic_em
     engine = _build_engine(llm, IdeaEncoder(embed_fn=deterministic_embed))
     request = EvolutionRequest(
         challenge="mi tienda online no vende nada desde hace semanas",
-        domain=DomainName.GENERIC,
+        domain="generic",
         population_size=4,
         generations=1,
         profile=profile,

@@ -17,7 +17,7 @@ import hashlib
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -62,16 +62,6 @@ class MutationType(StrEnum):
     TARGET_MARKET = "target_market"
     BUSINESS_MODEL = "business_model"
     HYBRID = "hybrid"
-
-
-class DomainName(StrEnum):
-    INDUSTRIAL_DESIGN = "industrial_design"
-    MARKETING = "marketing"
-    ARCHITECTURE = "architecture"
-    VIDEOGAMES = "videogames"
-    RESEARCH = "research"
-    STARTUPS = "startups"
-    GENERIC = "generic"
 
 
 # ── Evaluación ──────────────────────────────────────────────────────
@@ -186,7 +176,11 @@ class Idea(BaseModel):
     run_id: RunId = ""
     parent_ids: list[IdeaId] = Field(default_factory=list)
     mutation_type: MutationType | None = None
-    domain: DomainName = DomainName.GENERIC
+    # Nombre de un domain pack (registro dinámico, `core/domain_registry.py`
+    # — Fase 6). Ya no es un enum: cualquier string se acepta aquí; el
+    # motor resuelve el pack en `Settings.get_domain()`, con fallback a
+    # "generic" si el nombre no existe.
+    domain: str = "generic"
 
     # Evaluación (agentes LLM + novelty objetiva del motor)
     evaluation: EvaluationScores | None = None
@@ -241,7 +235,7 @@ class EvolutionState(BaseModel):
 
     run_id: RunId = Field(default_factory=lambda: _new_id("run"))
     challenge: str = ""
-    domain: DomainName = DomainName.GENERIC
+    domain: str = "generic"
     generation: int = 0
     total_generations: int = 10
     population_size: int = 20
@@ -285,9 +279,15 @@ class BehaviorDimension(BaseModel):
 
 
 class DomainConfig(BaseModel):
-    """Configuración completa para un dominio creativo."""
+    """Configuración completa para un dominio creativo.
 
-    name: DomainName
+    Cargada por `core/domain_registry.py` desde un domain pack
+    (`configs/domains/<nombre>/`, Fase 6) — ya no hay un enum de nombres
+    válidos en código; cualquier string es un nombre de dominio válido a
+    nivel de tipo, resuelto en tiempo de ejecución por el registro.
+    """
+
+    name: str
     display_name: str
     description: str = ""
 
@@ -306,8 +306,19 @@ class DomainConfig(BaseModel):
     default_population_size: int = Field(default=8, ge=4, le=10000)
     default_generations: int = Field(default=3, ge=1, le=1000)
 
-    system_prompt: str = ""
-    evaluation_criteria: list[str] = Field(default_factory=list)
+    # Prompts del pack (D3, Fase 6): persona/rúbrica de cada rol, resueltos
+    # en cascada pack → base por el registro (`domain_registry.py`). Pueden
+    # contener los placeholders {reto}/{perfil}/{inspiraciones} — ver
+    # `domain_registry.format_domain_prompt`. Vacíos, cada agente cae a su
+    # propio texto por defecto (el motor nunca depende de que existan).
+    generator_prompt: str = ""
+    evaluator_prompt: str = ""
+    analyst_prompt: str = ""
+
+    # Campos extra del ChallengeProfile.dominio que este pack quiere que el
+    # Analista Funcional rellene (D4, Fase 6). Cada uno: {"nombre": ...,
+    # "descripcion": ...}. Vacío = el Analista no pregunta nada extra.
+    profile_fields: list[dict[str, str]] = Field(default_factory=list)
 
     @field_validator("evaluation_weights")
     @classmethod
@@ -390,6 +401,11 @@ class ChallengeProfile(BaseModel):
     restricciones_duras: list[str] = Field(default_factory=list)
     reto_reformulado: str = ""
     preguntas_pendientes: list[str] = Field(default_factory=list, max_length=2)
+    # Campos extra declarados por el domain pack (D4, Fase 6,
+    # `DomainConfig.profile_fields`) — p.ej. tipo de artista y aforo para
+    # el pack `tuesdi`. El núcleo del perfil (arriba) es estable entre
+    # dominios; esto es lo único que varía según el pack.
+    dominio: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Solicitudes y Respuestas API ────────────────────────────────────
@@ -402,7 +418,7 @@ class EvolutionRequest(BaseModel):
     # run_id pre-asignado por el caller (streaming): permite al cliente
     # recuperar los resultados si pierde la conexión a mitad del run.
     run_id: RunId | None = None
-    domain: DomainName = DomainName.GENERIC
+    domain: str = "generic"
     population_size: int | None = Field(default=None, ge=4, le=500)
     generations: int | None = Field(default=None, ge=1, le=200)
     custom_weights: dict[str, float] | None = None
@@ -418,7 +434,7 @@ class EvolutionResponse(BaseModel):
 
     run_id: RunId
     challenge: str
-    domain: DomainName
+    domain: str
     generations_completed: int
     total_ideas_generated: int
     elite_count: int

@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from ..core.config import get_settings
 from ..core.exceptions import IdeaNotFoundError
 from ..core.models import (
-    DomainName,
     EvaluationScores,
     Idea,
     IdeaFeatures,
@@ -172,7 +171,7 @@ class IdeaRepository:
                     "run_id": idea.run_id,
                     "parent_ids": json.dumps(idea.parent_ids),
                     "mutation_type": idea.mutation_type.value if idea.mutation_type else None,
-                    "domain": idea.domain.value,
+                    "domain": idea.domain,
                     "evaluation": json.dumps(
                         idea.evaluation.model_dump() if idea.evaluation else None
                     ),
@@ -270,7 +269,7 @@ class IdeaRepository:
                     ORDER BY (evaluation->>'weighted_score')::FLOAT DESC NULLS LAST
                     LIMIT :limit
                 """),
-                {"domain": idea.domain.value, "exclude_id": idea.id, "limit": limit},
+                {"domain": idea.domain, "exclude_id": idea.id, "limit": limit},
             )
             return [self.row_to_idea(row) for row in result.fetchall()]
 
@@ -463,7 +462,7 @@ class IdeaRepository:
             run_id=row.run_id,
             parent_ids=_as_json(row.parent_ids) or [],
             mutation_type=MutationType(row.mutation_type) if row.mutation_type else None,
-            domain=DomainName(row.domain),
+            domain=row.domain,
             evaluation=evaluation,
             genome_vector=_as_json(row.genome_vector) or [],
             behavior_descriptor=_as_json(row.behavior_descriptor) or [],

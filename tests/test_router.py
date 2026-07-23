@@ -150,7 +150,7 @@ class TestRouterInQDCycle:
         from creative_engine.agents.generator import IdeaGeneratorAgent
         from creative_engine.agents.innovation import InnovationAgent
         from creative_engine.agents.market import MarketAgent
-        from creative_engine.core.models import DomainName, EvolutionRequest
+        from creative_engine.core.models import EvolutionRequest
         from creative_engine.evolution import encoders as enc
         from creative_engine.evolution.crossover import CrossoverEngine
         from creative_engine.evolution.encoders import IdeaEncoder
@@ -219,7 +219,7 @@ class TestRouterInQDCycle:
             state = await engine.run_evolution(
                 EvolutionRequest(
                     challenge="Movilidad urbana sostenible e innovadora",
-                    domain=DomainName.GENERIC,
+                    domain="generic",
                     population_size=6,
                     generations=2,
                 )

@@ -8,7 +8,7 @@ ideas evalúa en paralelo.
 import asyncio
 
 from creative_engine.core.config import get_settings, reset_settings
-from creative_engine.core.models import DomainName, EvolutionRequest
+from creative_engine.core.models import EvolutionRequest
 
 
 async def test_eval_batch_respects_concurrency_limit(deterministic_embed, monkeypatch) -> None:
@@ -90,7 +90,7 @@ async def test_eval_batch_respects_concurrency_limit(deterministic_embed, monkey
     await engine.run_evolution(
         EvolutionRequest(
             challenge="Movilidad urbana sostenible e innovadora",
-            domain=DomainName.GENERIC,
+            domain="generic",
             population_size=4,
             generations=1,
         )

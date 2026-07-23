@@ -13,9 +13,11 @@ from pydantic import ValidationError
 from creative_engine.analysis.analyst import FunctionalAnalystAgent
 from creative_engine.analysis.mirror import render_mirror
 from creative_engine.core.models import (
+    BehaviorDimension,
     ChallengeFriction,
     ChallengeProfile,
     ChallengeTopography,
+    DomainConfig,
     FunctionalHypothesis,
 )
 
@@ -205,6 +207,107 @@ class TestFunctionalAnalystAgent:
         sent_prompt = llm.generate_structured.call_args.kwargs["prompt"]
         assert "primer intento de reformulación" in sent_prompt
         assert "coste de los ingredientes" in sent_prompt
+
+
+class TestDomainProfileFields:
+    """D4, Fase 6: campos extra de ChallengeProfile.dominio declarados por
+    el domain pack (`DomainConfig.profile_fields`), sin tocar el motor."""
+
+    def _domain_with_fields(self, profile_fields: list[dict[str, str]]) -> DomainConfig:
+        return DomainConfig(
+            name="tuesdi",
+            display_name="TUESDI",
+            behavior_dimensions=[
+                BehaviorDimension(name="a", bins=5),
+                BehaviorDimension(name="b", bins=5),
+            ],
+            profile_fields=profile_fields,
+        )
+
+    async def test_without_domain_dominio_stays_empty(self) -> None:
+        """Sin domain (comportamiento de siempre): dominio queda vacío,
+        aunque el LLM devuelva un bloque 'dominio' por su cuenta."""
+        llm = _mock_llm(
+            {
+                "reto_reformulado": "algo",
+                "dominio": {"tipo_artista": "pintor"},
+            }
+        )
+        agent = FunctionalAnalystAgent(llm)
+        profile = await agent.analyze("un reto cualquiera de prueba suficientemente largo")
+        assert profile.dominio == {}
+
+    async def test_domain_without_profile_fields_keeps_dominio_empty(self) -> None:
+        llm = _mock_llm({"reto_reformulado": "algo", "dominio": {"x": "y"}})
+        agent = FunctionalAnalystAgent(llm)
+        domain = self._domain_with_fields([])
+        profile = await agent.analyze(
+            "un reto cualquiera de prueba suficientemente largo", domain=domain
+        )
+        assert profile.dominio == {}
+
+    async def test_domain_with_profile_fields_populates_dominio(self) -> None:
+        llm = _mock_llm(
+            {
+                "reto_reformulado": "algo",
+                "dominio": {"tipo_artista": "pintor", "aforo_tipico": "50 personas"},
+            }
+        )
+        agent = FunctionalAnalystAgent(llm)
+        domain = self._domain_with_fields(
+            [
+                {"nombre": "tipo_artista", "descripcion": "Género o disciplina"},
+                {"nombre": "aforo_tipico", "descripcion": "Capacidad típica"},
+            ]
+        )
+        profile = await agent.analyze(
+            "un reto cualquiera de prueba suficientemente largo", domain=domain
+        )
+        assert profile.dominio == {"tipo_artista": "pintor", "aforo_tipico": "50 personas"}
+
+    async def test_dominio_ignores_undeclared_fields(self) -> None:
+        """El Analista solo recoge los campos que el pack declaró — un
+        campo extra que el LLM invente no se cuela en el perfil."""
+        llm = _mock_llm(
+            {
+                "reto_reformulado": "algo",
+                "dominio": {"tipo_artista": "pintor", "campo_no_declarado": "x"},
+            }
+        )
+        agent = FunctionalAnalystAgent(llm)
+        domain = self._domain_with_fields(
+            [{"nombre": "tipo_artista", "descripcion": "Género o disciplina"}]
+        )
+        profile = await agent.analyze(
+            "un reto cualquiera de prueba suficientemente largo", domain=domain
+        )
+        assert profile.dominio == {"tipo_artista": "pintor"}
+
+    async def test_prompt_includes_dominio_schema_block_when_declared(self) -> None:
+        llm = _mock_llm({"reto_reformulado": "algo"})
+        agent = FunctionalAnalystAgent(llm)
+        domain = self._domain_with_fields(
+            [{"nombre": "tipo_artista", "descripcion": "Género o disciplina"}]
+        )
+        await agent.analyze(
+            "un reto cualquiera de prueba suficientemente largo", domain=domain
+        )
+        prompt = llm.generate_structured.call_args.kwargs["prompt"]
+        assert '"dominio"' in prompt
+        assert "tipo_artista" in prompt
+
+    async def test_domain_analyst_prompt_used_as_system_prompt(self) -> None:
+        llm = _mock_llm({"reto_reformulado": "algo"})
+        agent = FunctionalAnalystAgent(llm)
+        domain = self._domain_with_fields([])
+        domain = domain.model_copy(update={"analyst_prompt": "Persona TUESDI a medida"})
+
+        await agent.analyze(
+            "un reto cualquiera de prueba suficientemente largo", domain=domain
+        )
+
+        system_prompt = llm.generate_structured.call_args.kwargs["system_prompt"]
+        assert system_prompt == "Persona TUESDI a medida"
 
 
 class TestRenderMirror:

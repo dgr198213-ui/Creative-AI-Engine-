@@ -1,0 +1,13 @@
+# Campos extra de ChallengeProfile.dominio para el pack tuesdi (D4, Fase 6).
+# El Analista Funcional extiende su esquema JSON con estos campos y solo
+# recoge lo que aquí se declara — el modelo base (ChallengeProfile) no
+# sabe qué es un "aforo" ni le hace falta.
+campos:
+  - nombre: tipo_artista
+    descripcion: >
+      Disciplina artística (música, artes visuales, artes escénicas,
+      literatura...) y género o estilo si el usuario lo menciona
+  - nombre: aforo_tipico
+    descripcion: >
+      Capacidad típica de los espacios donde actúa o expone (si aplica),
+      o alcance típico de su publicación/lanzamiento más reciente

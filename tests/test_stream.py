@@ -10,7 +10,7 @@ from creative_engine.agents.feasibility import FeasibilityAgent
 from creative_engine.agents.generator import IdeaGeneratorAgent
 from creative_engine.agents.innovation import InnovationAgent
 from creative_engine.agents.market import MarketAgent
-from creative_engine.core.models import DomainName, EvolutionRequest
+from creative_engine.core.models import EvolutionRequest
 from creative_engine.evolution.crossover import CrossoverEngine
 from creative_engine.evolution.encoders import IdeaEncoder
 from creative_engine.evolution.mutation import MutationEngine
@@ -93,7 +93,7 @@ async def test_callback_receives_families_per_generation(sim_llm, deterministic_
 
     request = EvolutionRequest(
         challenge="Soluciones para movilidad urbana sostenible",
-        domain=DomainName.GENERIC,
+        domain="generic",
         population_size=6,
         generations=3,
     )
@@ -125,7 +125,7 @@ async def test_engine_respects_preassigned_run_id(sim_llm, deterministic_embed) 
     )
     request = EvolutionRequest(
         challenge="Soluciones para movilidad urbana sostenible",
-        domain=DomainName.GENERIC,
+        domain="generic",
         population_size=4,
         generations=1,
         run_id="run_preasignado_test",

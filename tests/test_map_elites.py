@@ -3,7 +3,7 @@
 import pytest
 
 from creative_engine.core.exceptions import BehaviorDescriptorError, PopulationEmptyError
-from creative_engine.core.models import DomainName, EvaluationScores, Idea, IdeaStatus
+from creative_engine.core.models import EvaluationScores, Idea, IdeaStatus
 from creative_engine.evolution.map_elites import MAPElitesArchive
 
 
@@ -22,7 +22,7 @@ def make_idea(
         title=title,
         description="Una idea de prueba para verificar el archivo MAP-Elites",
         status=IdeaStatus.EVALUATED,
-        domain=DomainName.GENERIC,
+        domain="generic",
     )
     idea.evaluation = EvaluationScores(utility=utility, feasibility=feasibility)
     idea.behavior_descriptor = descriptor

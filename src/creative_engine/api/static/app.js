@@ -47,24 +47,69 @@ function withApiKeyParam(url) {
 }
 
 // ---- Estado 1: selección de ámbito y validación ----
+// Los chips de dominio y los retos de ejemplo se construyen desde
+// GET /api/v1/domains (Fase 6, bloque 4): un domain pack nuevo
+// (configs/domains/<nombre>/) aparece aquí sin tocar este archivo.
 const challengeEl = $("challenge");
 const goBtn = $("go");
+const scopeEl = $("scope");
+const examplesEl = $("examples");
 
-document.querySelectorAll(".chip").forEach((chip) => {
-  chip.addEventListener("click", () => {
-    document.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", "false"));
-    chip.setAttribute("aria-pressed", "true");
-    state.domain = chip.dataset.domain;
-  });
-});
+let domainPacks = [];
 
-document.querySelectorAll(".ex").forEach((ex) => {
-  ex.addEventListener("click", () => {
-    challengeEl.value = ex.textContent;
-    challengeEl.dispatchEvent(new Event("input"));
-    challengeEl.focus();
+function renderExamples(domainName) {
+  const pack = domainPacks.find((p) => p.name === domainName);
+  const examples = pack ? pack.examples : [];
+  examplesEl.innerHTML = "";
+  examples.forEach((texto) => {
+    const btn = document.createElement("button");
+    btn.className = "ex";
+    btn.textContent = texto;
+    btn.addEventListener("click", () => {
+      challengeEl.value = texto;
+      challengeEl.dispatchEvent(new Event("input"));
+      challengeEl.focus();
+    });
+    examplesEl.appendChild(btn);
   });
-});
+}
+
+function renderChips(packs) {
+  scopeEl.innerHTML = "";
+  packs.forEach((pack, i) => {
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.dataset.domain = pack.name;
+    chip.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+    chip.textContent = pack.display_name;
+    chip.addEventListener("click", () => {
+      scopeEl.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", "false"));
+      chip.setAttribute("aria-pressed", "true");
+      state.domain = pack.name;
+      renderExamples(pack.name);
+    });
+    scopeEl.appendChild(chip);
+  });
+}
+
+async function loadDomains() {
+  try {
+    const resp = await apiFetch("/api/v1/domains");
+    domainPacks = resp.ok ? await resp.json() : [];
+  } catch {
+    domainPacks = [];
+  }
+  if (!domainPacks.length) {
+    domainPacks = [
+      { name: "generic", display_name: "General", description: "", examples: [] },
+    ];
+  }
+  renderChips(domainPacks);
+  state.domain = domainPacks[0].name;
+  renderExamples(state.domain);
+}
+
+loadDomains();
 
 challengeEl.addEventListener("input", () => {
   goBtn.disabled = challengeEl.value.trim().length < 10;

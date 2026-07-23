@@ -5,7 +5,7 @@ from creative_engine.agents.evaluator_orchestrator import EvaluatorOrchestrator
 from creative_engine.agents.feasibility import FeasibilityAgent
 from creative_engine.agents.innovation import InnovationAgent
 from creative_engine.agents.market import MarketAgent
-from creative_engine.core.models import DomainName, Idea
+from creative_engine.core.models import Idea
 
 
 async def test_agent_returns_valid_result(mock_llm_provider) -> None:
@@ -14,7 +14,7 @@ async def test_agent_returns_valid_result(mock_llm_provider) -> None:
     idea = Idea(
         title="Bicicleta Voladora",
         description="Bicicleta que utiliza hélices para volar sobre el tráfico urbano.",
-        domain=DomainName.GENERIC,
+        domain="generic",
     )
 
     result = await agent.safe_evaluate(idea, context={"challenge": "Movilidad urbana"})

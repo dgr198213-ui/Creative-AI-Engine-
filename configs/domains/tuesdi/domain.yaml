@@ -1,0 +1,42 @@
+name: tuesdi
+display_name: "TUESDI — Visibilidad de Artistas Independientes"
+description: >
+  Ideas para que artistas independientes (música, artes visuales, artes
+  escénicas, literatura) ganen público y visibilidad sin depender de
+  sellos, galerías o promotoras grandes.
+
+# Descriptor derivado del embedding → diversidad semántica real, igual
+# que el resto de dominios (D2 de la Fase 6: no se tocan descriptores).
+descriptor_mode: embedding
+
+behavior_dimensions:
+  - name: "semantica_1"
+    description: "Primera proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_2"
+    description: "Segunda proyección del espacio semántico"
+    bins: 10
+  - name: "semantica_3"
+    description: "Tercera proyección del espacio semántico"
+    bins: 8
+
+# Fitness = calidad pura; la novedad la calcula el motor (peso 0).
+# Sube feasibility frente al genérico: para un artista independiente,
+# una idea inviable con su presupuesto/tiempo real no vale nada.
+evaluation_weights:
+  novelty: 0.0
+  utility: 0.30
+  feasibility: 0.30
+  impact: 0.20
+  market_fit: 0.15
+  sustainability: 0.0
+  scalability: 0.05
+
+allowed_mutations:
+  - functionality
+  - target_market
+  - business_model
+  - hybrid
+
+default_population_size: 8
+default_generations: 3

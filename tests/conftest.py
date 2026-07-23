@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from creative_engine.core.models import (
-    DomainName,
     EvaluationScores,
     Idea,
     IdeaStatus,
@@ -68,7 +67,7 @@ def evaluated_idea() -> Idea:
         limitations=["Peso superior", "Complejidad en uniones"],
         status=IdeaStatus.EVALUATED,
         generation=2,
-        domain=DomainName.INDUSTRIAL_DESIGN,
+        domain="industrial_design",
     )
     idea.evaluation = EvaluationScores(
         novelty=0.85,

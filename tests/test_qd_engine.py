@@ -11,7 +11,7 @@ from creative_engine.agents.generator import IdeaGeneratorAgent
 from creative_engine.agents.innovation import InnovationAgent
 from creative_engine.agents.market import MarketAgent
 from creative_engine.core.exceptions import LLMError
-from creative_engine.core.models import DomainName, EvolutionRequest
+from creative_engine.core.models import EvolutionRequest
 from creative_engine.evolution.crossover import CrossoverEngine
 from creative_engine.evolution.encoders import IdeaEncoder
 from creative_engine.evolution.mutation import MutationEngine
@@ -98,7 +98,7 @@ async def test_full_evolution_cycle(sim_llm, deterministic_embed) -> None:
 
     request = EvolutionRequest(
         challenge="Diseña soluciones innovadoras para movilidad urbana sostenible",
-        domain=DomainName.GENERIC,
+        domain="generic",
         population_size=6,
         generations=2,
     )
@@ -160,7 +160,7 @@ async def test_population_rebuild_after_outage(sim_llm, deterministic_embed) -> 
         state = await engine.run_evolution(
             EvolutionRequest(
                 challenge="Movilidad urbana sostenible e innovadora",
-                domain=DomainName.GENERIC,
+                domain="generic",
                 population_size=6,
                 generations=1,
             )
@@ -199,7 +199,7 @@ async def test_run_without_any_idea_ends_in_failed(deterministic_embed) -> None:
     state = await engine.run_evolution(
         EvolutionRequest(
             challenge="Movilidad urbana sostenible e innovadora",
-            domain=DomainName.GENERIC,
+            domain="generic",
             population_size=6,
             generations=2,
         )

@@ -21,7 +21,7 @@ from creative_engine.agents.combined_evaluator import CombinedEvaluatorAgent
 from creative_engine.agents.evaluator_orchestrator import EvaluatorOrchestrator
 from creative_engine.agents.generator import IdeaGeneratorAgent
 from creative_engine.core.memory_utils import current_rss_mb
-from creative_engine.core.models import DomainName, EvolutionRequest
+from creative_engine.core.models import EvolutionRequest
 from creative_engine.evolution.crossover import CrossoverEngine
 from creative_engine.evolution.encoders import IdeaEncoder
 from creative_engine.evolution.mutation import MutationEngine
@@ -101,7 +101,7 @@ async def test_second_run_does_not_grow_memory_vs_first(deterministic_embed) -> 
     encoder = IdeaEncoder(embed_fn=deterministic_embed)
     request_kwargs: dict = {
         "challenge": "Movilidad urbana sostenible e innovadora",
-        "domain": DomainName.GENERIC,
+        "domain": "generic",
         "population_size": 6,
         "generations": 2,
     }
@@ -142,7 +142,7 @@ async def test_run_evolution_logs_memory_footprint(deterministic_embed) -> None:
         state = await engine.run_evolution(
             EvolutionRequest(
                 challenge="Movilidad urbana sostenible e innovadora",
-                domain=DomainName.GENERIC,
+                domain="generic",
                 population_size=4,
                 generations=1,
             )

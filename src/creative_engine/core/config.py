@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, PrivateAttr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .models import BehaviorDimension, DomainConfig, DomainName
+from .domain_registry import DomainPack, DomainPackError, load_domain_packs
+from .models import BehaviorDimension, DomainConfig
 
 # raíz del repo: src/creative_engine/core/config.py → ../../../configs
 _CONFIGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "configs"
@@ -137,7 +137,13 @@ class Settings(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
 
-    domains: dict[DomainName, DomainConfig] = Field(default_factory=dict)
+    # Nombre de dominio (string libre, Fase 6) → config resuelta. Nunca se
+    # asigna a mano fuera de `load()`/tests: la fuente de verdad son los
+    # domain packs en `configs/domains/` (`domain_registry.load_domain_packs`).
+    domains: dict[str, DomainConfig] = Field(default_factory=dict)
+    # Packs completos (con ejemplos, para el panel/GET /api/v1/domains) —
+    # PrivateAttr porque DomainPack no es un modelo Pydantic serializable.
+    _packs: dict[str, DomainPack] = PrivateAttr(default_factory=dict)
 
     # Enrutamiento por rol. Formato: "rol=prov1,prov2;rol2=prov3".
     # Ej: "evaluator=groq,gemini;generator=gemini,groq;writer=gemini".
@@ -180,33 +186,44 @@ class Settings(BaseSettings):
         if redis_url:
             settings.database.redis_url = redis_url
 
-        if _CONFIGS_DIR.exists():
-            for yaml_file in sorted(_CONFIGS_DIR.glob("*.yaml")):
-                try:
-                    domain_cfg = DomainConfig.model_validate(
-                        yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
-                    )
-                    settings.domains[domain_cfg.name] = domain_cfg
-                except Exception as e:
-                    import structlog
+        # Domain packs (Fase 6): arranque RUIDOSO si configs/domains/
+        # existe pero un pack está mal formado — nunca degradación
+        # silenciosa (un dominio "funcionando" con los defaults de otro
+        # es peor que no arrancar). Un configs/domains/ ausente no es un
+        # error: cae al genérico embebido (default_generic_domain), igual
+        # que si el repo se ejecuta sin ningún archivo de configuración.
+        try:
+            packs = load_domain_packs(_CONFIGS_DIR)
+        except DomainPackError as e:
+            raise RuntimeError(f"Domain pack mal formado: {e}") from e
 
-                    structlog.get_logger(__name__).warning(
-                        "domain_config_invalid", file=str(yaml_file), error=str(e)
-                    )
+        settings._packs = packs
+        settings.domains = {name: pack.config for name, pack in packs.items()}
 
-        if DomainName.GENERIC not in settings.domains:
-            settings.domains[DomainName.GENERIC] = default_generic_domain()
+        if "generic" not in settings.domains:
+            settings.domains["generic"] = default_generic_domain()
 
         return settings
 
-    def get_domain(self, name: DomainName) -> DomainConfig:
-        return self.domains.get(name, self.domains[DomainName.GENERIC])
+    def get_domain(self, name: str) -> DomainConfig:
+        return self.domains.get(name, self.domains["generic"])
+
+    def get_pack(self, name: str) -> DomainPack | None:
+        return self._packs.get(name)
+
+    def list_packs(self) -> dict[str, DomainPack]:
+        return dict(self._packs)
 
 
 def default_generic_domain() -> DomainConfig:
-    """Dominio genérico embebido: garantiza arranque sin configs/."""
+    """Dominio genérico embebido: garantiza arranque sin configs/domains/.
+
+    Texto idéntico al del pack `configs/domains/base/` — este fallback
+    solo entra en juego si el repo se ejecuta sin ningún directorio de
+    domain packs (p.ej. instalado como paquete suelto).
+    """
     return DomainConfig(
-        name=DomainName.GENERIC,
+        name="generic",
         display_name="Creatividad General",
         description="Configuración genérica para cualquier dominio creativo",
         descriptor_mode="embedding",
@@ -215,17 +232,34 @@ def default_generic_domain() -> DomainConfig:
             BehaviorDimension(name="semantica_2", bins=10),
             BehaviorDimension(name="semantica_3", bins=8),
         ],
-        system_prompt=(
+        generator_prompt=(
             "Eres un experto en innovación y creatividad computacional. "
             "Generas ideas que son simultáneamente novedosas, útiles y viables. "
             "Cada idea debe incluir un título conciso, una descripción detallada, "
             "ventajas clave, limitaciones honestas y una hipótesis de valor clara."
         ),
-        evaluation_criteria=[
-            "La idea resuelve un problema real o crea valor significativo",
-            "La idea es técnicamente viable con la tecnología actual o próxima",
-            "La idea tiene potencial de impacto medible",
-        ],
+        evaluator_prompt=(
+            "Eres un comité de tres expertos que evalúa ideas creativas:\n"
+            "- Un estratega de innovación (juzga la UTILIDAD: ¿resuelve un dolor real?)\n"
+            "- Un ingeniero senior (juzga la VIABILIDAD técnica con tecnología actual)\n"
+            "- Un analista de mercado (juzga el ENCAJE con el mercado objetivo)\n\n"
+            "Puntúa con honestidad y criterio. No infles las notas."
+        ),
+        analyst_prompt=(
+            "Eres un analista funcional senior especializado en diagnosticar\n"
+            "problemas de negocio a partir de descripciones vagas de personas no técnicas.\n\n"
+            "Reglas estrictas:\n"
+            "- NUNCA inventes datos que el usuario no ha dado. Si algo no se puede saber\n"
+            '  con lo que hay, dilo explícitamente (null, o "desconocida" en frecuencia)\n'
+            "  — no rellenes con suposiciones presentadas como hechos.\n"
+            "- La hipótesis de la causa de fondo es una HIPÓTESIS, no un diagnóstico\n"
+            "  certero: exprésala con la incertidumbre real que tiene (campo `confianza`).\n"
+            "- `reto_reformulado` debe conservar el vocabulario y el dominio del usuario\n"
+            "  donde sea posible — no lo traduzcas a jerga técnica innecesaria.\n"
+            "- Si tu confianza en la hipótesis es menor a 0.6, incluye hasta 2\n"
+            "  `preguntas_pendientes` que ayudarían a confirmarla; si es 0.6 o más, esa\n"
+            "  lista debe quedar vacía."
+        ),
     )
 
 

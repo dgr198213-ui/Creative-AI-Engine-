@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ...core.models import DomainName, EvolutionRequest, EvolutionResponse
+from ...core.models import EvolutionRequest, EvolutionResponse
 from ..deps import require_repo
 from ..guardrails import enforce_evolution_rate_limit, enforce_request_budget
 
@@ -144,7 +144,7 @@ async def get_evolution_status(run_id: str, request: Request) -> EvolutionRespon
     return EvolutionResponse(
         run_id=run_id,
         challenge="",
-        domain=elites[0].domain if elites else DomainName.GENERIC,
+        domain=elites[0].domain if elites else "generic",
         generations_completed=max_generation,
         total_ideas_generated=int(stats.get("total") or 0),
         elite_count=int(stats.get("elites") or 0),

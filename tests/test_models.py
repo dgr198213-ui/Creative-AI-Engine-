@@ -6,7 +6,6 @@ from creative_engine.core.models import (
     DEFAULT_WEIGHTS,
     BehaviorDimension,
     DomainConfig,
-    DomainName,
     EvaluationScores,
     Idea,
     IdeaFeatures,
@@ -120,7 +119,7 @@ class TestDomainConfig:
 
     def test_grid_shape(self) -> None:
         config = DomainConfig(
-            name=DomainName.GENERIC,
+            name="generic",
             display_name="Test",
             behavior_dimensions=self._dims(),
         )
@@ -129,7 +128,7 @@ class TestDomainConfig:
 
     def test_default_descriptor_mode_is_embedding(self) -> None:
         config = DomainConfig(
-            name=DomainName.GENERIC,
+            name="generic",
             display_name="Test",
             behavior_dimensions=self._dims(),
         )
@@ -138,7 +137,7 @@ class TestDomainConfig:
     def test_invalid_weights_rejected(self) -> None:
         with pytest.raises(ValueError):
             DomainConfig(
-                name=DomainName.GENERIC,
+                name="generic",
                 display_name="Test",
                 behavior_dimensions=self._dims(),
                 evaluation_weights={"novelty": 0.5, "utility": 0.6},  # suma 1.1

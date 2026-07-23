@@ -21,6 +21,9 @@ router = APIRouter()
 
 class AnalyzeRequest(BaseModel):
     challenge: str = Field(..., min_length=10, max_length=5000)
+    # Domain pack (Fase 6): si declara profile_fields, el Analista
+    # extiende el esquema JSON con un bloque `dominio` — ver D4.
+    domain: str = "generic"
     # Ciclo único de corrección (§2 del diseño): si vienen ambos, el
     # Analista produce un perfil v2 a partir del v1 + la corrección.
     correction: str | None = Field(default=None, max_length=2000)
@@ -56,12 +59,15 @@ async def analyze_challenge(request_body: AnalyzeRequest) -> AnalyzeResponse:
     from ...analysis.mirror import render_mirror
     from ...llm.factory import build_router, role_llms
 
+    domain_cfg = settings.get_domain(request_body.domain)
+
     llm_router = build_router(settings)
     try:
         analyst_llm = role_llms(llm_router)["analyst"]
         agent = FunctionalAnalystAgent(analyst_llm)
         profile = await agent.analyze(
             challenge=request_body.challenge,
+            domain=domain_cfg,
             correction=request_body.correction,
             previous_profile=request_body.previous_profile,
         )
