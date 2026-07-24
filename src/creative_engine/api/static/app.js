@@ -270,6 +270,7 @@ async function recover() {
   $("note").textContent =
     "El motor sigue trabajando en el servidor. Mostrando los resultados guardados según llegan.";
 
+  let lastData = null;
   let lastCount = -1;
   let stable = 0;
 
@@ -285,13 +286,17 @@ async function recover() {
         $("note").textContent = `${data.family_count} enfoque${data.family_count === 1 ? "" : "s"} recuperado${data.family_count === 1 ? "" : "s"} — el motor puede seguir añadiendo.`;
         stable = data.family_count === lastCount ? stable + 1 : 0;
         lastCount = data.family_count;
+        lastData = data;
         if (stable >= 2) break; // dos lecturas iguales seguidas: run terminado
       }
     } catch { /* red inestable: siguiente intento */ }
   }
 
-  if (lastCount > 0) {
-    finish({ run_id: state.runId, families: new Array(lastCount) });
+  if (lastData) {
+    // Se pasa la respuesta real del endpoint (con total_ideas incluido),
+    // no un objeto sintético — antes perdía total_ideas y el resumen
+    // final mostraba "0 ideas exploradas" pese a haber generado decenas.
+    finish({ ...lastData, run_id: state.runId });
     $("status").textContent = "Listo (recuperado)";
     $("progress").style.width = "100%";
   } else {

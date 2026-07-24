@@ -500,3 +500,127 @@ async def test_recovery_families_include_id_and_advantages() -> None:
             rep = fam["representative"]
             assert rep["id"], "el representante debe tener id (si no, informe → undefined)"
             assert "advantages" in rep, "el representante debe incluir advantages"
+
+
+async def test_families_endpoint_includes_total_ideas() -> None:
+    """Incidente run_431a9c5d (24-jul-2026): el panel mostraba '0 ideas
+    exploradas' tras recuperar la conexión porque este endpoint no traía
+    total_ideas — solo total_elites. El contador de 'ideas exploradas'
+    debe reflejar TODAS las ideas procesadas del run (get_stats), no solo
+    las élites devueltas."""
+    from httpx import ASGITransport, AsyncClient
+
+    from creative_engine.core.models import EvaluationScores, Idea, IdeaStatus
+
+    s = Settings.load()
+    s.llm = {"default": LLMProviderConfig(name="sim", api_key=config.SecretStr("x"))}
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+    repo = _NullRepo()
+    app.state.repository = repo
+
+    idea = Idea(
+        title="Idea élite",
+        description="Descripción larga de la única idea élite del run.",
+        advantages=["Ventaja"],
+        status=IdeaStatus.ELITE,
+        run_id="run_431a9c5d",
+    )
+    idea.evaluation = EvaluationScores(utility=0.7, feasibility=0.6, market_fit=0.5)
+    idea.behavior_descriptor = [0.5, 0.5, 0.5]
+
+    async def fake_get_elites(run_id, limit=50):
+        return [idea] if run_id == "run_431a9c5d" else []
+
+    async def fake_get_stats(run_id=None):
+        # 24 ideas procesadas (8+7+9 por generación), solo 1 acabó élite —
+        # exactamente el escenario del incidente.
+        return {"total": 24, "elites": 1, "discarded": 23}
+
+    repo.get_elites_by_run = fake_get_elites
+    repo.get_stats = fake_get_stats
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/v1/runs/run_431a9c5d/families")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total_elites"] == 1
+    assert data["total_ideas"] == 24
+
+
+async def test_with_reports_rotates_provider_on_empty_content() -> None:
+    """Incidente run_431a9c5d: _attach_reports usaba un LLMProvider suelto
+    (siempre el primero configurado) sin ninguna posibilidad de rotar.
+    Ahora pasa por el router con el rol "writer": si terra devuelve vacío,
+    debe rotar a luna y el informe de la familia no debe quedar vacío."""
+    from httpx import ASGITransport, AsyncClient
+
+    from creative_engine.core.models import EvaluationScores, Idea, IdeaStatus
+
+    s = Settings.load()
+    s.llm = {
+        "terra": LLMProviderConfig(name="terra", api_key=config.SecretStr("x")),
+        "luna": LLMProviderConfig(name="luna", api_key=config.SecretStr("x")),
+    }
+    config._settings = s
+
+    from creative_engine.api.app import create_app
+
+    app = create_app()
+    repo = _NullRepo()
+    app.state.repository = repo
+
+    idea = Idea(
+        title="Idea élite",
+        description="Descripción larga de la única idea élite del run.",
+        advantages=["Ventaja"],
+        status=IdeaStatus.ELITE,
+        run_id="run_431a9c5d",
+    )
+    idea.evaluation = EvaluationScores(utility=0.7, feasibility=0.6, market_fit=0.5)
+    idea.behavior_descriptor = [0.5, 0.5, 0.5]
+
+    async def fake_get_elites(run_id, limit=50):
+        return [idea] if run_id == "run_431a9c5d" else []
+
+    repo.get_elites_by_run = fake_get_elites
+
+    class _EmptyThenNothingProvider:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        async def generate(self, prompt: str, **kwargs) -> str:
+            from creative_engine.core.exceptions import LLMEmptyResponseError
+
+            raise LLMEmptyResponseError("terra devolvió contenido vacío")
+
+        async def close(self) -> None:
+            return None
+
+    class _RealProvider:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        async def generate(self, prompt: str, **kwargs) -> str:
+            return "Informe real generado por luna."
+
+        async def close(self) -> None:
+            return None
+
+    def fake_llm_provider(cfg):
+        return _EmptyThenNothingProvider() if cfg.name == "terra" else _RealProvider()
+
+    with patch("creative_engine.llm.factory.LLMProvider", side_effect=fake_llm_provider):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get(
+                "/api/v1/runs/run_431a9c5d/families", params={"with_reports": "true"}
+            )
+
+    assert r.status_code == 200
+    data = r.json()
+    report = data["families"][0]["report"]
+    assert report == "Informe real generado por luna."
