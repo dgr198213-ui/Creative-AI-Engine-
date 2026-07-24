@@ -23,6 +23,7 @@ from tenacity import (
 from ..core.config import LLMProviderConfig
 from ..core.exceptions import (
     LLMAuthError,
+    LLMEmptyResponseError,
     LLMError,
     LLMInvalidRequestError,
     LLMRateLimitError,
@@ -402,6 +403,28 @@ class LLMProvider:
             raise LLMError(f"Respuesta con formato inesperado: {e}") from e
 
         usage = data.get("usage", {})
+
+        # 200 OK con contenido vacío: visto en producción con modelos
+        # "razonadores" (p.ej. terra/gpt-5.6 tras perder `temperature` por
+        # autoadaptación) que consumen el presupuesto de tokens en
+        # razonamiento interno invisible y no dejan nada en `content`. No
+        # es un error de forma ni una indisponibilidad declarada, pero
+        # tampoco es usable — se trata como LLMRateLimitError para
+        # reutilizar el mismo reintento (@retry de este método) y la
+        # misma rotación de proveedor (LLMModelRouter.run) que ya existen,
+        # en vez de que el llamador (p.ej. WriterAgent) acepte un
+        # resultado vacío como si fuera válido.
+        if not content or not content.strip():
+            finish_reason = (
+                (data.get("choices") or [{}])[0].get("finish_reason")
+                if isinstance(data.get("choices"), list)
+                else None
+            )
+            raise LLMEmptyResponseError(
+                f"{self._config.name} devolvió contenido vacío "
+                f"(finish_reason={finish_reason})",
+                details={"provider": self._config.name, "finish_reason": finish_reason},
+            )
 
         self._log.debug(
             "llm_call_completed",

@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 296 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 309 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -176,6 +176,61 @@ Todo por variables de entorno, prefijo `CREATIVE_`, delimitador `__`:
   vacío.
 - Ante cualquier duda de config: `creative-engine doctor` lo diagnostica en
   segundos. No deducir de logs de runs fallidos.
+
+## Contenido vacío del LLM e informe/contador rotos (incidente run_431a9c5d, 24-jul-2026)
+
+Dos bugs del panel en el mismo run, ambos con causa raíz distinta:
+
+**1. Informe vacío del WriterAgent.** El log mostraba
+`report_generated agent=writer idea_id=... length=0` justo después de un
+`param_auto_dropped` de `temperature` en terra. Causa: un 200 OK con
+`content` vacío es real con modelos "razonadores" (la familia gpt-5.6)
+cuando el presupuesto de tokens se gasta en razonamiento interno
+invisible y no queda nada para el contenido visible — `LLMProvider`
+nunca comprobaba esto, `write_report()` daba por bueno lo que llegara y
+lo mostraba tal cual (vacío) en el panel.
+
+Fix:
+- `core/exceptions.py::LLMEmptyResponseError` (subclase de
+  `LLMRateLimitError`): `LLMProvider._call_api` la lanza si `content`
+  llega vacío o solo espacios en un 200 OK. Al ser subclase de
+  `LLMRateLimitError` reutiliza SIN código nuevo el reintento ya
+  existente (`@retry` de `_call_api`, un reintento contra el mismo
+  proveedor) y la rotación de proveedor que ya hace
+  `LLMModelRouter.run` ante indisponibilidad — exactamente "reintentar
+  y si persiste, rotar de proveedor" sin inventar un mecanismo aparte.
+- `WriterAgent.write_report`: cinturón de seguridad adicional — nunca
+  devuelve una cadena vacía como informe "bueno", ni siquiera si algún
+  día `self._llm` no pasara por el mecanismo de arriba (p.ej. un doble
+  en tests). Vacío → `"Informe no disponible: el proveedor no generó
+  contenido."`.
+- `api/routes/ideas.py::_attach_reports` (usado por
+  `GET /runs/{id}/families?with_reports=true`, la ruta real del
+  incidente) tomaba un `LLMProvider` suelto —
+  `next(iter(settings.llm.values()))`, siempre el primer proveedor
+  configurado, **sin router y por tanto sin ninguna posibilidad de
+  rotar**. Ahora construye el router y usa el rol `"writer"`
+  (`role_llms(router)["writer"]`), igual que ya hacía el otro endpoint
+  de informes (`POST /ideas/{id}/report`) — la inconsistencia entre
+  ambos era la fuga real que impedía la rotación en este código path.
+
+**2. Contador "0 ideas exploradas" con 24 ideas generadas (`new_ideas`
+8+7+9 en los logs).** `GET /runs/{run_id}/families` (la ruta que
+`app.js::recover()` usa para reponerse tras perder la conexión SSE) solo
+devolvía `total_elites`, nunca `total_ideas`. `recover()` reconstruía un
+objeto sintético (`{run_id, families: new Array(lastCount)}`) para pasar
+a `finish()`, que lee `data.total_ideas || 0` — al faltar el campo,
+mostraba siempre 0 sin importar cuántas ideas se hubieran generado
+realmente.
+
+Fix:
+- `get_run_families` añade `total_ideas` desde `repo.get_stats(run_id)`
+  (`stats.total` — TODAS las ideas procesadas del run, no solo las
+  élites devueltas).
+- `app.js::recover()` pasa a `finish()` la respuesta REAL del último
+  fetch (`{ ...lastData, run_id }`), no el objeto sintético — así
+  `total_ideas` (y cualquier otro campo futuro del endpoint) llega
+  intacto al resumen final.
 
 ## Retención de memoria entre runs (incidente 22-jul-2026)
 

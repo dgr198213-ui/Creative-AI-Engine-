@@ -80,6 +80,15 @@ class WriterAgent:
                 temperature=0.5,
                 max_tokens=max_tokens,
             )
+            # El proveedor (LLMProvider._call_api) ya reintenta y rota de
+            # proveedor ante contenido vacío (LLMEmptyResponseError, ver
+            # core/exceptions.py) — esto es un cinturón de seguridad
+            # adicional: el writer NUNCA da por bueno un informe de
+            # longitud cero, ni siquiera si algún día `self._llm` es un
+            # proveedor sin ese mecanismo (p.ej. un doble en tests).
+            if not report or not report.strip():
+                self._log.error("report_generation_empty", idea_id=idea.id)
+                return "Informe no disponible: el proveedor no generó contenido."
             self._log.info("report_generated", idea_id=idea.id, length=len(report))
             return report
         except Exception as e:

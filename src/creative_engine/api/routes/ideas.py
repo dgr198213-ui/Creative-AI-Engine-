@@ -71,6 +71,13 @@ async def get_run_families(
 
     `with_reports=true` genera un informe ejecutivo por familia con el
     WriterAgent — cuesta una llamada LLM por familia, por eso es opcional.
+
+    Incluye `total_ideas` (todas las ideas procesadas del run, no solo
+    las élites) — el panel lo necesita en el modo de recuperación
+    (`app.js::recover`, cuando la conexión SSE se cae y vuelve a pedir
+    este endpoint) para mostrar "N ideas exploradas" correctamente; sin
+    este campo mostraba "0 ideas exploradas" pese a haber generado
+    decenas (incidente run_431a9c5d, 24-jul-2026).
     """
     from ...evolution.clustering import group_into_families
 
@@ -85,10 +92,13 @@ async def get_run_families(
     if with_reports:
         await _attach_reports(families)
 
+    stats = await repo.get_stats(run_id=run_id)
+
     return {
         "run_id": run_id,
         "family_count": len(families),
         "total_elites": len(elites),
+        "total_ideas": int(stats.get("total") or 0),
         "families": [
             {
                 "family_id": fam.family_id,
@@ -123,23 +133,30 @@ async def get_run_families(
 
 
 async def _attach_reports(families: list) -> None:
-    """Genera un informe por familia con el WriterAgent (una llamada LLM cada uno)."""
+    """Genera un informe por familia con el WriterAgent (una llamada LLM cada uno).
+
+    Usa el router con el rol "writer" (con failover entre proveedores),
+    no un LLMProvider suelto — antes tomaba directamente el primer
+    proveedor configurado (`next(iter(settings.llm.values()))`) sin
+    ninguna posibilidad de rotar si ese proveedor fallaba o devolvía
+    contenido vacío (incidente run_431a9c5d, 24-jul-2026): "Informe no
+    disponible" en el panel sin ningún intento de usar otro proveedor.
+    """
     from ...agents.writer import WriterAgent
     from ...core.config import get_settings
-    from ...llm.provider import LLMProvider
+    from ...llm.factory import build_router, role_llms
 
     settings = get_settings()
     if not settings.llm:
         return  # sin LLM configurado: se devuelven las familias sin informe
 
-    config = next(iter(settings.llm.values()))
-    llm = LLMProvider(config)
+    router = build_router(settings)
     try:
-        writer = WriterAgent(llm)
+        writer = WriterAgent(role_llms(router)["writer"])
         for fam in families:
             fam.report = await writer.write_report(fam.representative)
     finally:
-        await llm.close()
+        await router.close_all()
 
 
 @router.post("/ideas/{idea_id}/report")

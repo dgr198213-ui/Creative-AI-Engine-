@@ -24,6 +24,23 @@ class LLMRateLimitError(LLMError):
     """Se excedió el rate limit del proveedor."""
 
 
+class LLMEmptyResponseError(LLMRateLimitError):
+    """El proveedor respondió 200 OK pero con contenido vacío.
+
+    Subclase de LLMRateLimitError a propósito: un HTTP 200 con `content`
+    vacío no es un error de forma (como un 400) ni una indisponibilidad
+    declarada por el proveedor, pero tampoco es una respuesta usable —
+    reutiliza el mismo camino de reintento (`LLMProvider._call_api`,
+    decorador `@retry`) y de rotación de proveedor
+    (`LLMModelRouter.run`, que ya hace failover ante
+    LLMRateLimitError) en vez de inventar un mecanismo aparte. Visto en
+    producción con modelos "razonadores" (p.ej. terra/gpt-5.6 tras
+    perder `temperature` por autoadaptación de parámetros): el
+    presupuesto de tokens se consume en razonamiento interno invisible
+    y no queda nada para el contenido visible.
+    """
+
+
 class LLMAuthError(LLMError):
     """API key inválida o sin permisos en el proveedor."""
 
