@@ -18,7 +18,7 @@ exploración de ideas. Resistir la tentación de convertirlo en algo más grande
 
 ```bash
 cd creative-ai-engine
-PYTHONPATH=src python -m pytest tests/ -q     # 309 tests, sin red ni BD
+PYTHONPATH=src python -m pytest tests/ -q     # 319 tests, sin red ni BD
 ruff check src/ tests/                         # lint
 ```
 
@@ -231,6 +231,68 @@ Fix:
   fetch (`{ ...lastData, run_id }`), no el objeto sintético — así
   `total_ideas` (y cualquier otro campo futuro del endpoint) llega
   intacto al resumen final.
+
+### Refinamiento post-review (Qodo, PR #9): contabilidad, cadena de failover y causa raíz de los tokens
+
+El fix de `LLMEmptyResponseError` de arriba era correcto pero incompleto en
+tres aspectos que un review de Qodo señaló sobre el propio PR:
+
+1. **El guard de presupuesto (`llm/budget.py`) subestimaba justo las
+   llamadas más caras.** Un intento vacío consume tokens reales
+   (razonamiento interno invisible) pero `_call_api` lanzaba
+   `LLMEmptyResponseError` antes de llamar a `_record_usage` — esos
+   tokens nunca entraban en `total_prompt_tokens`/`total_completion_tokens`.
+   Fix: `_record_usage` se llama con los tokens del intento vacío ANTES
+   de lanzar la excepción, y se añade el log `llm_empty_content`
+   (`finish_reason`, `prompt_tokens`, `completion_tokens`) para que sea
+   auditable desde logs sin depender del guard.
+
+2. **"Más llamadas" no es motivo para quitar el failover del writer** —
+   es el fix del incidente original. En su lugar, dos ajustes que
+   reducen el coste sin tocar la garantía:
+   - Predicado de reintento nuevo en `_call_api`
+     (`_is_retryable_same_provider`, `provider.py`): si el contenido
+     vacío trae `finish_reason="length"` (el modelo agotó TODO el
+     presupuesto pensando), reintentar contra el MISMO proveedor
+     repetiría el mismo resultado — se salta directo a la rotación del
+     router en vez de gastar una llamada más contra un proveedor que ya
+     mostró el patrón. Otros `finish_reason` (p.ej. `"stop"` con
+     contenido vacío, un caso más raro/transitorio) sí conservan el
+     reintento de una vez.
+   - `LLMModelRouter.run` y `RoledLLM`/`LLMProvider.generate` aceptan
+     ahora `max_providers: int | None` (pasa por `**kwargs`, sin romper
+     la interfaz — invariante 5). `WriterAgent.__init__(llm,
+     max_providers=2)` lo fija en 2: agotar una cadena de 4 proveedores
+     por UN informe sería 4 llamadas caras; 2 basta para distinguir "este
+     proveedor tuvo un mal momento" de "el prompt genera vacío en
+     cualquiera". El failover en sí (el mecanismo, no el límite) sigue
+     intacto.
+
+3. **Causa raíz probable, corregida en el origen:** en proveedores
+   "razonadores" (detectados por la misma señal ya usada por
+   `_temperature_style_hint` — `temperature` en `self._unsupported_params`,
+   sin hardcodear una lista de modelos), `max_tokens`/
+   `max_completion_tokens` incluye el razonamiento interno invisible. Un
+   tope ajustado (el del writer, 2000) se agota pensando y no deja nada
+   para el contenido visible. `_call_api` multiplica el tope enviado a la
+   API por `_REASONING_TOKEN_MULTIPLIER=3` con un suelo
+   `_REASONING_TOKEN_FLOOR=4096` cuando detecta esta señal — el
+   `max_tokens` que ven el resto del motor (contadores, logs) sigue
+   siendo el pedido originalmente, solo cambia lo que se envía en el
+   payload.
+
+4. **Confirmado: una respuesta vacía NO activa el disyuntor de rate
+   limit.** Aunque `LLMEmptyResponseError` hereda de `LLMRateLimitError`
+   (deliberado, para reutilizar retry/failover sin código nuevo — ver
+   arriba), `LLMModelRouter.run` tiene un `except LLMEmptyResponseError`
+   ANTES del `except (LLMRateLimitError, LLMAuthError)` (el orden
+   importa: es subclase, así que si no se captura primero cae en la
+   cláusula del padre) que rota al siguiente proveedor sin tocar
+   `breaker.failures`/`breaker.open_until`. Un proveedor sano que
+   devolvió un 200 vacío una vez no queda en cuarentena varios minutos
+   como si hubiera dado un 429 sostenido — test de control
+   `test_true_rate_limit_still_triggers_cooldown` confirma que un 429
+   real sigue disparando el enfriamiento normal.
 
 ## Retención de memoria entre runs (incidente 22-jul-2026)
 

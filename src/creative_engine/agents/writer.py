@@ -40,8 +40,16 @@ Tono: profesional, objetivo, orientado a la acción."""
 class WriterAgent:
     """Agente que genera informes detallados de ideas."""
 
-    def __init__(self, llm: LLMProvider) -> None:
+    def __init__(self, llm: LLMProvider, max_providers: int = 2) -> None:
         self._llm = llm
+        # Tope de proveedores distintos por informe (review Qodo PR #9):
+        # el failover ante contenido vacío es el fix del incidente y no
+        # se retira, pero agotar una cadena entera (p.ej. 4 proveedores)
+        # por UN informe sería 4 llamadas caras — casi siempre 2 alcanza
+        # para distinguir "este proveedor tuvo un mal momento" de
+        # "el reto/prompt genera vacío en cualquiera". Configurable por
+        # si algún despliegue quiere más margen.
+        self._max_providers = max_providers
         self._log = logger.bind(agent="writer")
 
     async def write_report(self, idea: Idea, max_tokens: int = 2000) -> str:
@@ -79,6 +87,7 @@ class WriterAgent:
                 prompt=prompt,
                 temperature=0.5,
                 max_tokens=max_tokens,
+                max_providers=self._max_providers,
             )
             # El proveedor (LLMProvider._call_api) ya reintenta y rota de
             # proveedor ante contenido vacío (LLMEmptyResponseError, ver
