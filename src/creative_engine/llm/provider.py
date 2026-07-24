@@ -15,7 +15,7 @@ import httpx
 import structlog
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -40,6 +40,33 @@ _SPECIAL_PARAMS = frozenset({"max_tokens", "max_completion_tokens"})
 # o "Unsupported value: 'temperature' does not support 0.9...". Captura el
 # nombre del parámetro entre comillas simples.
 _UNSUPPORTED_PARAM_RE = re.compile(r"Unsupported (?:parameter|value): '([^']+)'")
+
+
+def _is_retryable_same_provider(exc: BaseException) -> bool:
+    """Predicado de reintento de `_call_api` (mismo proveedor, una vez).
+
+    Casi todo lo indisponible-transitorio vale la pena reintentarlo
+    contra el MISMO proveedor (rate limit, red). La excepción: contenido
+    vacío con `finish_reason="length"` — el modelo gastó TODO el
+    presupuesto de tokens en razonamiento interno invisible; reintentar
+    con el mismo prompt y el mismo `max_tokens` repetiría el mismo
+    resultado vacío. En ese caso concreto no vale la pena gastar una
+    llamada más contra este proveedor: mejor rotar directamente
+    (`LLMModelRouter.run` ya hace failover ante LLMEmptyResponseError).
+    """
+    if isinstance(exc, LLMEmptyResponseError):
+        return exc.details.get("finish_reason") != "length"
+    return isinstance(exc, (LLMRateLimitError, httpx.ConnectError))
+
+
+# Proveedores "razonadores" (temperature en _unsupported_params, la única
+# señal disponible sin una lista de modelos hardcodeada) gastan parte del
+# presupuesto de max_tokens/max_completion_tokens en razonamiento interno
+# invisible antes de producir contenido visible. Multiplicador aplicado al
+# `max_tokens` pedido, con un suelo generoso — así un writer con
+# max_tokens=2000 no se queda sin margen para contenido real.
+_REASONING_TOKEN_MULTIPLIER = 3
+_REASONING_TOKEN_FLOOR = 4096
 
 
 def _temperature_style_hint(temperature: float) -> str:
@@ -128,8 +155,15 @@ class LLMProvider:
         system_prompt: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        max_providers: int | None = None,  # solo relevante para RoledLLM/router
     ) -> str:
-        """Genera texto a partir de un prompt."""
+        """Genera texto a partir de un prompt.
+
+        `max_providers` no aplica aquí (un LLMProvider suelto no enruta):
+        se acepta e ignora para que un llamador funcione igual con
+        `LLMProvider` o `RoledLLM` sin distinguir cuál recibió — ver
+        `LLMModelRouter.run`.
+        """
         async with self._semaphore:
             await self._rate_limit()
             response = await self._call_api(
@@ -146,6 +180,7 @@ class LLMProvider:
         prompt: str,
         response_format: dict[str, Any] | None = None,
         system_prompt: str | None = None,
+        max_providers: int | None = None,  # ver generate()
     ) -> dict[str, Any]:
         """Genera una respuesta estructurada (JSON).
 
@@ -177,7 +212,7 @@ class LLMProvider:
         self.total_completion_tokens += response.completion_tokens
 
     @retry(
-        retry=retry_if_exception_type((LLMRateLimitError, httpx.ConnectError)),
+        retry=retry_if_exception(_is_retryable_same_provider),
         # Pocos reintentos internos: el disyuntor del router gestiona la
         # indisponibilidad sostenida. Así el failover tarda segundos, no minutos.
         stop=stop_after_attempt(2),
@@ -217,6 +252,20 @@ class LLMProvider:
             messages.append({"role": "system", "content": effective_system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        # Causa raíz probable del contenido vacío: en modelos "razonadores"
+        # (temperature en _unsupported_params — la única señal disponible
+        # sin hardcodear una lista de modelos), max_tokens/
+        # max_completion_tokens incluye el razonamiento interno invisible.
+        # Un tope ajustado (p.ej. el del writer, 2000) se agota pensando y
+        # no deja nada para el contenido visible. Se amplía el presupuesto
+        # enviado a la API — el `max_tokens` que ve el resto del motor
+        # (contadores de coste, logs) sigue siendo el pedido originalmente.
+        effective_max_tokens = max_tokens
+        if "temperature" in self._unsupported_params:
+            effective_max_tokens = max(
+                max_tokens * _REASONING_TOKEN_MULTIPLIER, _REASONING_TOKEN_FLOOR
+            )
+
         payload: dict[str, Any] = {
             "model": self._config.model,
             "messages": messages,
@@ -227,9 +276,9 @@ class LLMProvider:
         # resto de proveedores compatibles siguen usando `max_tokens`.
         # El flag se autoadapta si el proveedor rechaza el parámetro.
         if self._use_max_completion_tokens:
-            payload["max_completion_tokens"] = max_tokens
+            payload["max_completion_tokens"] = effective_max_tokens
         else:
-            payload["max_tokens"] = max_tokens
+            payload["max_tokens"] = effective_max_tokens
         if response_format:
             payload["response_format"] = response_format
         if self._config.extra_body:
@@ -419,6 +468,28 @@ class LLMProvider:
                 (data.get("choices") or [{}])[0].get("finish_reason")
                 if isinstance(data.get("choices"), list)
                 else None
+            )
+            # El modelo consumió tokens reales (razonamiento invisible)
+            # aunque no haya contenido visible — sin contabilizarlo aquí,
+            # el guard de presupuesto (llm/budget.py) subestima justo las
+            # llamadas más caras (las que se van en pensar y no producen
+            # nada). Se registra ANTES de lanzar, con el mismo mecanismo
+            # que una respuesta normal (_record_usage).
+            self._record_usage(
+                LLMResponse(
+                    content="",
+                    model=data.get("model", self._config.model),
+                    provider=self._config.name,
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                )
+            )
+            self._log.warning(
+                "llm_empty_content",
+                finish_reason=finish_reason,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
             )
             raise LLMEmptyResponseError(
                 f"{self._config.name} devolvió contenido vacío "

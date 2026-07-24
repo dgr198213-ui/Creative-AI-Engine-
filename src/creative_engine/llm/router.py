@@ -34,6 +34,7 @@ import structlog
 
 from ..core.exceptions import (
     LLMAuthError,
+    LLMEmptyResponseError,
     LLMError,
     LLMInvalidRequestError,
     LLMRateLimitError,
@@ -172,13 +173,26 @@ class LLMModelRouter:
     def _chain_for(self, role: str) -> list[str]:
         return self._routing.get(role, self._default_chain)
 
-    async def run(self, role: str, method: str, prompt: str, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        role: str,
+        method: str,
+        prompt: str,
+        max_providers: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Ejecuta `method` sobre la cadena del rol, con failover.
 
         Salta al siguiente proveedor ante fallos de disponibilidad
         (rate limit / sobrecarga) y de autenticación (clave inválida):
         una clave rota en un proveedor no debe matar el run si hay otro.
         Otros errores (p.ej. parseo) se propagan sin failover.
+
+        `max_providers` (opcional): tope de proveedores distintos a
+        intentar en esta llamada, sin importar cuán larga sea la cadena
+        del rol. Pensado para llamadas puntuales caras (p.ej. el informe
+        del WriterAgent) donde agotar una cadena de 4 proveedores sería
+        4 llamadas caras en vez de 2 — ver `agents/writer.py`.
         """
         chain = self._chain_for(role)
         last_error: Exception | None = None
@@ -189,6 +203,8 @@ class LLMModelRouter:
             for name in chain
             if name not in self._disabled_for_run and name not in self._budget_excluded
         ]
+        if max_providers is not None:
+            candidates = candidates[:max_providers]
         if not candidates:
             reason = (
                 "excluidos por presupuesto agotado"
@@ -236,6 +252,25 @@ class LLMModelRouter:
                 if idx > 0:
                     self._log.info("failover_succeeded", role=role, provider=name)
                 return result
+            except LLMEmptyResponseError as e:
+                # Contenido vacío no es indisponibilidad del proveedor: es
+                # subclase de LLMRateLimitError solo para reutilizar el
+                # mecanismo de rotación (ver core/exceptions.py), pero un
+                # proveedor SANO que devolvió un 200 vacío una vez no debe
+                # quedar en cuarentena varios minutos como si hubiera dado
+                # un 429 sostenido — se rota a la siguiente sin tocar el
+                # disyuntor (breaker.failures/open_until intactos).
+                last_error = e
+                self._log.warning(
+                    "empty_response_failover",
+                    role=role,
+                    provider=name,
+                    next_provider=(
+                        candidates[idx + 1] if idx < len(candidates) - 1 else None
+                    ),
+                    error=str(e),
+                )
+                continue
             except (LLMRateLimitError, LLMAuthError) as e:
                 last_error = e
                 breaker.failures += 1
